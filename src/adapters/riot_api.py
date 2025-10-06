@@ -14,6 +14,18 @@ import cassiopeia as cass
 from cassiopeia import Match, Summoner
 
 from src.config import settings
+
+
+class RiotAPIError(Exception):
+    def __init__(self, message: str, status_code: int | None = None, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+class RateLimitError(RiotAPIError):
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("Rate limit exceeded", status_code=429, retry_after=retry_after)
 from src.contracts import SummonerDTO
 from src.core.ports import RiotAPIPort
 
@@ -147,18 +159,14 @@ class RiotAPIAdapter(RiotAPIPort):
 
         except cass.datastores.riotapi.common.APIError as e:
             if e.code == 429:
-                logger.warning(
-                    f"Rate limited on match timeline {match_id}, "
-                    f"Cassiopeia will handle retry with Retry-After header"
-                )
+                retry_after = getattr(e, "retry_after", None) or 60
+                raise RateLimitError(retry_after)
             elif e.code == 403:
-                logger.error("Forbidden: Check API key permissions")
+                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403)
             else:
-                logger.error(f"API error fetching timeline for {match_id}: {e}")
-            return None
+                raise RiotAPIError(f"API error fetching timeline for {match_id}: {e}", status_code=e.code)
         except Exception as e:
-            logger.error(f"Unexpected error fetching timeline for {match_id}: {e}")
-            return None
+            raise RiotAPIError(f"Unexpected error fetching timeline for {match_id}: {e}")
 
     async def get_match_history(
         self, puuid: str, region: str, count: int = 20
@@ -228,15 +236,14 @@ class RiotAPIAdapter(RiotAPIPort):
 
         except cass.datastores.riotapi.common.APIError as e:
             if e.code == 429:
-                logger.warning(
-                    f"Rate limited on match {match_id}, will be retried automatically"
-                )
+                retry_after = getattr(e, "retry_after", None) or 60
+                raise RateLimitError(retry_after)
+            elif e.code == 403:
+                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403)
             else:
-                logger.error(f"API error fetching match {match_id}: {e}")
-            return None
+                raise RiotAPIError(f"API error fetching match {match_id}: {e}", status_code=e.code)
         except Exception as e:
-            logger.error(f"Unexpected error fetching match {match_id}: {e}")
-            return None
+            raise RiotAPIError(f"Unexpected error fetching match {match_id}: {e}")
 
     def _convert_region(self, region: str) -> str:
         """Convert region string to Cassiopeia format.
