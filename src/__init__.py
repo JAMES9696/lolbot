@@ -1,3 +1,7 @@
-"""Project Chimera - LoL Discord Bot with AI-powered analysis."""
+"""
+Project Chimera - AI-Powered LoL Discord Bot
+==============================================
 
-__version__ = "0.1.0"
+A hexagonal architecture implementation for a Discord bot that integrates
+with Riot Games API to provide AI-driven match analysis and insights.
+"""
