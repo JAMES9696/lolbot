@@ -3,7 +3,7 @@
 Tests focus on adapter behavior with mocked asyncpg operations.
 """
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
@@ -83,9 +83,7 @@ class TestDatabaseAdapter:
         mock_conn = AsyncMock()
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
-        result = await adapter.save_user_binding(
-            "discord_123", "puuid_456", "TestSummoner"
-        )
+        result = await adapter.save_user_binding("discord_123", "puuid_456", "TestSummoner")
 
         assert result is True
         mock_conn.execute.assert_called_once()
@@ -98,18 +96,14 @@ class TestDatabaseAdapter:
         mock_conn.execute.side_effect = asyncpg.UniqueViolationError("duplicate key")
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
-        result = await adapter.save_user_binding(
-            "discord_123", "puuid_456", "TestSummoner"
-        )
+        result = await adapter.save_user_binding("discord_123", "puuid_456", "TestSummoner")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_save_user_binding_no_pool(self, adapter):
         """Test saving user binding without pool."""
-        result = await adapter.save_user_binding(
-            "discord_123", "puuid_456", "TestSummoner"
-        )
+        result = await adapter.save_user_binding("discord_123", "puuid_456", "TestSummoner")
         assert result is False
 
     @pytest.mark.asyncio

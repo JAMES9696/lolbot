@@ -4,9 +4,9 @@ Each event type has its own model for type safety.
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Union
+from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
 from .common import BaseContract, Position
 
@@ -163,12 +163,12 @@ class ChampionKillEvent(BaseEvent):
     killer_id: int = Field(..., ge=0, le=10, description="0 for execute")
     victim_id: int = Field(..., ge=1, le=10)
     position: Position
-    assisting_participant_ids: List[int] = Field(default_factory=list)
+    assisting_participant_ids: list[int] = Field(default_factory=list)
     bounty: int = Field(0, description="Base bounty gold")
     shutdown_bounty: int = Field(0, description="Shutdown bounty gold")
     kill_streak_length: int = Field(0)
-    victim_damage_dealt: List[Dict[str, Any]] | None = Field(None)
-    victim_damage_received: List[Dict[str, Any]] | None = Field(None)
+    victim_damage_dealt: list[dict[str, Any]] | None = Field(None)
+    victim_damage_received: list[dict[str, Any]] | None = Field(None)
 
 
 class WardPlacedEvent(BaseEvent):
@@ -192,7 +192,7 @@ class BuildingKillEvent(BaseEvent):
 
     type: Literal[EventType.BUILDING_KILL]
     killer_id: int = Field(..., ge=0, le=10)
-    assisting_participant_ids: List[int] = Field(default_factory=list)
+    assisting_participant_ids: list[int] = Field(default_factory=list)
     building_type: BuildingType
     position: Position
     team_id: int = Field(..., description="100 (blue) or 200 (red)")
@@ -265,22 +265,22 @@ class GameEndEvent(BaseEvent):
 
 
 # Union type for all possible events
-TimelineEvent = Union[
-    PauseEvent,
-    SkillLevelUpEvent,
-    ItemPurchasedEvent,
-    ItemSoldEvent,
-    ItemDestroyedEvent,
-    ItemUndoEvent,
-    ChampionKillEvent,
-    WardPlacedEvent,
-    WardKillEvent,
-    BuildingKillEvent,
-    EliteMonsterKillEvent,
-    TurretPlateDestroyedEvent,
-    ChampionSpecialKillEvent,
-    ChampionTransformEvent,
-    DragonSoulGivenEvent,
-    ObjectiveBountyEvent,
-    GameEndEvent,
-]
+TimelineEvent = (
+    PauseEvent
+    | SkillLevelUpEvent
+    | ItemPurchasedEvent
+    | ItemSoldEvent
+    | ItemDestroyedEvent
+    | ItemUndoEvent
+    | ChampionKillEvent
+    | WardPlacedEvent
+    | WardKillEvent
+    | BuildingKillEvent
+    | EliteMonsterKillEvent
+    | TurretPlateDestroyedEvent
+    | ChampionSpecialKillEvent
+    | ChampionTransformEvent
+    | DragonSoulGivenEvent
+    | ObjectiveBountyEvent
+    | GameEndEvent
+)

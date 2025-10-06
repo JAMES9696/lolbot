@@ -2,7 +2,7 @@
 Data contracts for Discord interactions and commands.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 class InteractionType(str, Enum):
     """Discord interaction types."""
+
     PING = "ping"
     SLASH_COMMAND = "slash_command"
     BUTTON = "button"
@@ -20,6 +21,7 @@ class InteractionType(str, Enum):
 
 class CommandName(str, Enum):
     """Available slash commands."""
+
     BIND = "bind"
     UNBIND = "unbind"
     PROFILE = "profile"
@@ -29,6 +31,7 @@ class CommandName(str, Enum):
 
 class EmbedColor(int, Enum):
     """Discord embed colors for different states."""
+
     INFO = 0x3498DB  # Blue
     SUCCESS = 0x2ECC71  # Green
     WARNING = 0xF39C12  # Orange
@@ -39,54 +42,30 @@ class EmbedColor(int, Enum):
 class InteractionResponse(BaseModel):
     """Standard response for Discord interactions."""
 
-    success: bool = Field(
-        ...,
-        description="Whether the interaction was successful"
-    )
+    success: bool = Field(..., description="Whether the interaction was successful")
 
-    ephemeral: bool = Field(
-        True,
-        description="Whether response should be visible only to user"
-    )
+    ephemeral: bool = Field(True, description="Whether response should be visible only to user")
 
-    embed_title: str = Field(
-        ...,
-        description="Title for Discord embed"
-    )
+    embed_title: str = Field(..., description="Title for Discord embed")
 
-    embed_description: str = Field(
-        ...,
-        description="Description for Discord embed"
-    )
+    embed_description: str = Field(..., description="Description for Discord embed")
 
-    embed_color: int = Field(
-        EmbedColor.INFO,
-        description="Color for Discord embed"
-    )
+    embed_color: int = Field(EmbedColor.INFO, description="Color for Discord embed")
 
     embed_fields: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Additional fields for embed"
+        default_factory=list, description="Additional fields for embed"
     )
 
-    embed_footer: str | None = Field(
-        None,
-        description="Footer text for embed"
-    )
+    embed_footer: str | None = Field(None, description="Footer text for embed")
 
-    embed_thumbnail_url: str | None = Field(
-        None,
-        description="Thumbnail URL for embed"
-    )
+    embed_thumbnail_url: str | None = Field(None, description="Thumbnail URL for embed")
 
     buttons: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Interactive buttons to add"
+        default_factory=list, description="Interactive buttons to add"
     )
 
     should_defer: bool = Field(
-        False,
-        description="Whether to defer the response (for long operations)"
+        False, description="Whether to defer the response (for long operations)"
     )
 
 
@@ -96,59 +75,31 @@ class BindCommandOptions(BaseModel):
     region: str | None = Field(
         None,
         description="Preferred region for account binding",
-        pattern=r"^(br1|eun1|euw1|jp1|kr|la1|la2|na1|oc1|ph2|ru|sg2|th2|tr1|tw2|vn2)$"
+        pattern=r"^(br1|eun1|euw1|jp1|kr|la1|la2|na1|oc1|ph2|ru|sg2|th2|tr1|tw2|vn2)$",
     )
 
-    force_rebind: bool = Field(
-        False,
-        description="Force rebinding even if already bound"
-    )
+    force_rebind: bool = Field(False, description="Force rebinding even if already bound")
 
 
 class DeferredTask(BaseModel):
     """Model for deferred tasks sent to backend."""
 
-    task_id: str = Field(
-        ...,
-        description="Unique task identifier"
-    )
+    task_id: str = Field(..., description="Unique task identifier")
 
-    task_type: str = Field(
-        ...,
-        description="Type of task (e.g., 'match_analysis')"
-    )
+    task_type: str = Field(..., description="Type of task (e.g., 'match_analysis')")
 
-    interaction_token: str = Field(
-        ...,
-        description="Discord interaction token for follow-up"
-    )
+    interaction_token: str = Field(..., description="Discord interaction token for follow-up")
 
-    discord_id: str = Field(
-        ...,
-        description="Discord user ID"
-    )
+    discord_id: str = Field(..., description="Discord user ID")
 
-    channel_id: str = Field(
-        ...,
-        description="Discord channel ID"
-    )
+    channel_id: str = Field(..., description="Discord channel ID")
 
-    guild_id: str | None = Field(
-        None,
-        description="Discord guild ID if applicable"
-    )
+    guild_id: str | None = Field(None, description="Discord guild ID if applicable")
 
-    payload: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Task-specific payload"
-    )
+    payload: dict[str, Any] = Field(default_factory=dict, description="Task-specific payload")
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="Task creation timestamp"
+        default_factory=lambda: datetime.now(UTC), description="Task creation timestamp"
     )
 
-    expires_at: datetime | None = Field(
-        None,
-        description="Task expiration timestamp"
-    )
+    expires_at: datetime | None = Field(None, description="Task expiration timestamp")

@@ -62,9 +62,7 @@ class Challenges(BaseModel):
     kda_player: float | None = Field(None, alias="kda")
     ability_uses: int | None = Field(None, alias="abilityUses")
     ace_before_15_minutes: int | None = Field(None, alias="acesBefore15Minutes")
-    allied_jungle_monster_kills: int | None = Field(
-        None, alias="alliedJungleMonsterKills"
-    )
+    allied_jungle_monster_kills: int | None = Field(None, alias="alliedJungleMonsterKills")
     baron_takedowns: int | None = Field(None, alias="baronTakedowns")
     blast_cone_opposite_opponent_count: int | None = Field(
         None, alias="blastConeOppositeOpponentCount"
@@ -103,9 +101,7 @@ class ParticipantDTO(BaseModel):
 
     # Damage stats
     total_damage_dealt: int = Field(..., alias="totalDamageDealt")
-    total_damage_dealt_to_champions: int = Field(
-        ..., alias="totalDamageDealtToChampions"
-    )
+    total_damage_dealt_to_champions: int = Field(..., alias="totalDamageDealtToChampions")
     total_damage_taken: int = Field(..., alias="totalDamageTaken")
     damage_self_mitigated: int = Field(..., alias="damageSelfMitigated")
 
@@ -230,15 +226,9 @@ class TimelineEvent(BaseModel):
     victim_id: int | None = Field(None, alias="victimId")
     kill_streak_length: int | None = Field(None, alias="killStreakLength")
     killer_id: int | None = Field(None, alias="killerId")
-    assisting_participant_ids: list[int] | None = Field(
-        None, alias="assistingParticipantIds"
-    )
-    victim_damage_dealt: list[VictimDamage] | None = Field(
-        None, alias="victimDamageDealt"
-    )
-    victim_damage_received: list[VictimDamage] | None = Field(
-        None, alias="victimDamageReceived"
-    )
+    assisting_participant_ids: list[int] | None = Field(None, alias="assistingParticipantIds")
+    victim_damage_dealt: list[VictimDamage] | None = Field(None, alias="victimDamageDealt")
+    victim_damage_received: list[VictimDamage] | None = Field(None, alias="victimDamageReceived")
 
     # Building and monster events
     building_type: str | None = Field(None, alias="buildingType")
@@ -280,9 +270,7 @@ class TimelineFrame(BaseModel):
     """Frame in a match timeline."""
 
     events: list[TimelineEvent]
-    participant_frames: dict[str, ParticipantFrame] = Field(
-        ..., alias="participantFrames"
-    )
+    participant_frames: dict[str, ParticipantFrame] = Field(..., alias="participantFrames")
     timestamp: int
 
 

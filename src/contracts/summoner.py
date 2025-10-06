@@ -3,11 +3,11 @@ Summoner and account-related data contracts.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field
 
-from .common import BaseContract, Division, Platform, Queue, Region, Tier
+from .common import BaseContract, Division, Tier
 
 
 class SummonerProfile(BaseContract):
@@ -15,7 +15,9 @@ class SummonerProfile(BaseContract):
 
     account_id: str = Field(..., description="Encrypted account ID")
     profile_icon_id: int = Field(..., description="Profile icon ID")
-    revision_date: int = Field(..., description="Date summoner was last modified (epoch milliseconds)")
+    revision_date: int = Field(
+        ..., description="Date summoner was last modified (epoch milliseconds)"
+    )
     id: str = Field(..., description="Encrypted summoner ID")
     puuid: str = Field(..., description="Encrypted PUUID")
     summoner_level: int = Field(..., ge=1, description="Summoner level")
@@ -57,7 +59,7 @@ class LeagueEntry(BaseContract):
     veteran: bool = Field(False, description="Is a veteran in this tier")
     fresh_blood: bool = Field(False, description="Is new to this tier")
     inactive: bool = Field(False, description="Is inactive")
-    mini_series: Dict[str, Any] | None = Field(None, description="Promotion series info")
+    mini_series: dict[str, Any] | None = Field(None, description="Promotion series info")
 
     @property
     def win_rate(self) -> float:
@@ -90,7 +92,9 @@ class MasteryInfo(BaseContract):
     chest_granted: bool = Field(False, description="Has chest been granted")
     tokens_earned: int = Field(0, ge=0, le=3, description="Mastery tokens earned")
     marks_of_mastery: int = Field(0, ge=0, description="Marks of mastery earned")
-    next_season_milestone: Dict[str, Any] | None = Field(None, description="Next season milestone info")
+    next_season_milestone: dict[str, Any] | None = Field(
+        None, description="Next season milestone info"
+    )
 
     @property
     def last_played(self) -> datetime:
@@ -130,10 +134,12 @@ class PlayerInfo(BaseContract):
     summoner_level: int = Field(..., ge=1, description="Summoner level")
 
     # Ranked data
-    league_entries: List[LeagueEntry] = Field(default_factory=list, description="Ranked queue info")
+    league_entries: list[LeagueEntry] = Field(default_factory=list, description="Ranked queue info")
 
     # Mastery data
-    top_masteries: List[MasteryInfo] = Field(default_factory=list, description="Top champion masteries")
+    top_masteries: list[MasteryInfo] = Field(
+        default_factory=list, description="Top champion masteries"
+    )
     total_mastery_score: int | None = Field(None, ge=0, description="Total mastery score")
 
     # Discord binding (for our bot)
