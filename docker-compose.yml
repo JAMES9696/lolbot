@@ -1,0 +1,116 @@
+# Project Chimera - Infrastructure as Code (IaC)
+# PostgreSQL and Redis services for LoL Discord Bot
+
+version: '3.9'
+
+services:
+  # PostgreSQL - Primary data storage for user profiles, match history, and analytics
+  postgres:
+    image: postgres:16.1-alpine
+    container_name: chimera-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chimera_user
+      POSTGRES_PASSWORD: chimera_secure_password_2024
+      POSTGRES_DB: chimera_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - chimera_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chimera_user -d chimera_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis - Cache and message broker for async task queues (Celery)
+  redis:
+    image: redis:7.2.4-alpine
+    container_name: chimera-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --requirepass chimera_redis_password_2024
+      --loglevel notice
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - chimera_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "auth", "chimera_redis_password_2024", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Commander - Web UI for Redis monitoring (development only)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: chimera-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: "local:redis:6379:0:chimera_redis_password_2024"
+      HTTP_USER: admin
+      HTTP_PASSWORD: admin_dev_2024
+    ports:
+      - "8081:8081"
+    networks:
+      - chimera_network
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - dev
+
+  # Adminer - Database management tool (development only)
+  adminer:
+    image: adminer:4.8.1-standalone
+    container_name: chimera-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - chimera_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha-dark
+    profiles:
+      - dev
+
+networks:
+  chimera_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
