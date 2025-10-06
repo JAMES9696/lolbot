@@ -271,7 +271,7 @@ class RiotAPIAdapter:
 async def example_usage() -> None:
     """Example of using the Riot API adapter with observability."""
     # This would normally come from environment variables
-    api_key = "RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    api_key = "RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # pragma: allowlist secret
 
     async with RiotAPIAdapter(api_key=api_key) as adapter:
         try:
@@ -280,8 +280,8 @@ async def example_usage() -> None:
             logger.info("Match duration: %d seconds", timeline.game_duration)
         except RateLimitError as e:
             logger.warning("Rate limited. Retry after %d seconds", e.retry_after)
-        except RiotAPIError as e:
-            logger.error("API Error: %s", e)
+        except RiotAPIError:
+            logger.exception("API Error occurred")
 
 
 if __name__ == "__main__":

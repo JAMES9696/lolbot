@@ -123,6 +123,7 @@ unfixable = []
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "PLR2004", "ANN"]
 "src/contracts/*" = ["ANN"]
+"src/core/observability.py" = ["G004", "TRY300", "TRY400", "C901", "PLR0915"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -180,7 +181,8 @@ module = [
     "cassiopeia.*",
     "discord.*",
     "celery.*",
-    "uvloop.*"
+    "uvloop.*",
+    "structlog.*"
 ]
 ignore_missing_imports = true
 

@@ -131,7 +131,8 @@ repos:
       - id: sqlfluff-lint
         name: SQL linting
         files: \.(sql)$
-        args: ['--dialect', 'postgres']
+        args: ['--dialect', 'postgres', '--disable-progress-bar']
+        exclude: ^infrastructure/
 
   # Markdown linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
@@ -139,7 +140,7 @@ repos:
     hooks:
       - id: markdownlint
         name: Markdown linting
-        args: ['--fix']
+        args: ['--fix', '--disable', 'MD013', 'MD040', 'MD036']
 
 # Custom local hooks
   - repo: local

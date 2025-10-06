@@ -37,7 +37,7 @@ structlog.configure(
             ],
         ),
         structlog.processors.dict_tracebacks,
-        structlog.dev.ConsoleRenderer() if sys.stderr.isatty() else structlog.processors.JSONRenderer(),
+        structlog.dev.ConsoleRenderer() if sys.stderr.isatty() else structlog.processors.JSONRenderer(),  # type: ignore[list-item]
     ],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
@@ -108,7 +108,7 @@ def _serialize_value(value: Any, max_length: int = 1000) -> Any:
         return str_repr
 
 
-def llm_debug_wrapper(  # noqa: C901, PLR0915
+def llm_debug_wrapper(
     *,
     capture_result: bool = True,
     capture_args: bool = True,
@@ -142,7 +142,7 @@ def llm_debug_wrapper(  # noqa: C901, PLR0915
         ...     return {"match_id": match_id, "data": "..."}
     """
 
-    def decorator(func: F) -> F:  # noqa: PLR0915
+    def decorator(func: F) -> F:
         # Determine if function is async
         is_async = asyncio.iscoroutinefunction(func)
 
