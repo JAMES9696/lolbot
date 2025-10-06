@@ -173,11 +173,18 @@ class RiotAPIAdapter:
 
                 # Parse response into Pydantic model
                 timeline_data = await response.json()
+                info = timeline_data.get("info", {})
+                frames = info.get("frames", []) or []
+                frame_interval = info.get("frameInterval") or info.get("frame_interval")
+                if isinstance(frame_interval, (int, float)) and frames:
+                    game_duration = int((len(frames) * frame_interval) / 1000)
+                else:
+                    game_duration = info.get("gameLength") or 0
 
                 # Transform to our domain model
                 return MatchTimeline(
                     match_id=match_id,
-                    game_duration=timeline_data.get("info", {}).get("gameLength", 0) // 1000,  # Convert ms to seconds
+                    game_duration=game_duration,
                     game_version=timeline_data.get("info", {}).get("gameVersion", "unknown"),
                     participants=timeline_data.get("info", {}).get("participants", []),
                     frames=timeline_data.get("info", {}).get("frames", []),

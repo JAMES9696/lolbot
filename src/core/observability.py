@@ -7,6 +7,7 @@ through the llm_debug_wrapper decorator and structured logging.
 import asyncio
 import functools
 import json
+import re
 import sys
 import time
 import traceback
@@ -49,6 +50,33 @@ logger = structlog.get_logger()
 
 # Type variable for generic decorator
 F = TypeVar("F", bound=Callable[..., Any])
+
+# Sensitive data redaction pattern
+_SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|password|pass|authorization|auth|client_secret)", re.IGNORECASE)
+
+
+def _mask_scalar(value: Any) -> Any:
+    if value is None:
+        return None
+    s = str(value)
+    if len(s) <= 8:
+        return "***"
+    return f"{s[:4]}…{s[-3:]}"
+
+
+def _redact_obj(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: (_mask_scalar(v) if _SENSITIVE_KEY_RE.search(str(k)) else _redact_obj(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_obj(i) for i in obj]
+    return obj
+
+
+def _safe_serialize_kv(key: str, value: Any, max_length: int) -> Any:
+    ser = _serialize_value(value, max_length)
+    if _SENSITIVE_KEY_RE.search(str(key)):
+        return _redact_obj(ser)
+    return ser
 
 
 class FunctionTrace(BaseModel):
@@ -164,7 +192,7 @@ def llm_debug_wrapper(
             # Capture arguments if enabled
             if capture_args:
                 trace.args = [_serialize_value(arg, max_arg_length) for arg in args]
-                trace.kwargs = {k: _serialize_value(v, max_arg_length) for k, v in kwargs.items()}
+                trace.kwargs = {k: _safe_serialize_kv(k, v, max_arg_length) for k, v in kwargs.items()}
 
             # Bind context variables for correlation
             bind_contextvars(execution_id=execution_id)
@@ -190,7 +218,7 @@ def llm_debug_wrapper(
 
                 # Capture result if enabled
                 if capture_result:
-                    trace.result = _serialize_value(result, max_arg_length)
+                    trace.result = _redact_obj(_serialize_value(result, max_arg_length))
 
                 # Log success
                 await logger.alog(
@@ -247,7 +275,7 @@ def llm_debug_wrapper(
             # Capture arguments if enabled
             if capture_args:
                 trace.args = [_serialize_value(arg, max_arg_length) for arg in args]
-                trace.kwargs = {k: _serialize_value(v, max_arg_length) for k, v in kwargs.items()}
+                trace.kwargs = {k: _safe_serialize_kv(k, v, max_arg_length) for k, v in kwargs.items()}
 
             # Bind context variables for correlation
             bind_contextvars(execution_id=execution_id)
@@ -273,7 +301,7 @@ def llm_debug_wrapper(
 
                 # Capture result if enabled
                 if capture_result:
-                    trace.result = _serialize_value(result, max_arg_length)
+                    trace.result = _redact_obj(_serialize_value(result, max_arg_length))
 
                 # Log success
                 logger.log(
