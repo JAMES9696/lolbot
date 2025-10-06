@@ -29,4 +29,6 @@ repos:
           - --config-file=pyproject.toml
           - --strict
         files: ^src/
+        # Exclude legacy duplicate config module to avoid module-name collision
+        exclude: ^src/config($|/)|^src/config\.py$
         pass_filenames: true
