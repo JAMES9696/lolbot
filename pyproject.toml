@@ -105,9 +105,11 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 follow_imports = "normal"
-namespace_packages = false
-explicit_package_bases = true
 mypy_path = "src"
+# Avoid duplicate module collision between package `src/config/` and legacy module `src/config.py`
+exclude = '^src/config(\.py|/__init__\.py)$'
+
+namespace_packages = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
