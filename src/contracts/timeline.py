@@ -3,12 +3,11 @@ Match Timeline data contracts for Riot API Match-V5.
 This is the core data structure for match analysis.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import Field, field_validator
 
 from .common import BaseContract, Position
-from .events import TimelineEvent
 
 
 class ChampionStats(BaseContract):
@@ -79,17 +78,16 @@ class Frame(BaseContract):
     """A single frame in the match timeline."""
 
     timestamp: int = Field(..., description="Frame timestamp in milliseconds")
-    participant_frames: Dict[str, ParticipantFrame] = Field(
+    participant_frames: dict[str, ParticipantFrame] = Field(
         ..., description="Participant states indexed by participant ID string"
     )
-    events: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="Events that occurred during this frame"
+    events: list[dict[str, Any]] = Field(
+        default_factory=list, description="Events that occurred during this frame"
     )
 
     @field_validator("participant_frames", mode="before")
     @classmethod
-    def convert_participant_frames(cls, v: Any) -> Dict[str, ParticipantFrame]:
+    def convert_participant_frames(cls, v: Any) -> dict[str, ParticipantFrame]:
         """Convert raw participant frames to typed models."""
         if isinstance(v, dict):
             result = {}
@@ -98,7 +96,11 @@ class Frame(BaseContract):
                     # Ensure participant_id is in the data
                     if "participantId" in value:
                         value["participant_id"] = value["participantId"]
-                    result[key] = ParticipantFrame(**value) if not isinstance(value, ParticipantFrame) else value
+                    result[key] = (
+                        ParticipantFrame(**value)
+                        if not isinstance(value, ParticipantFrame)
+                        else value
+                    )
                 else:
                     result[key] = value
             return result
@@ -115,12 +117,10 @@ class TimelineParticipant(BaseContract):
 class TimelineInfo(BaseContract):
     """Timeline information containing frames and metadata."""
 
-    frame_interval: int = Field(
-        60000, description="Milliseconds between frames (usually 60000)"
-    )
-    frames: List[Frame] = Field(..., description="List of all frames in the match")
+    frame_interval: int = Field(60000, description="Milliseconds between frames (usually 60000)")
+    frames: list[Frame] = Field(..., description="List of all frames in the match")
     game_id: int = Field(..., description="Game ID")
-    participants: List[TimelineParticipant] = Field(
+    participants: list[TimelineParticipant] = Field(
         ..., description="Participant ID to PUUID mapping"
     )
 
@@ -130,7 +130,7 @@ class TimelineMetadata(BaseContract):
 
     data_version: str = Field(..., description="Data version")
     match_id: str = Field(..., description="Match ID")
-    participants: List[str] = Field(..., description="List of participant PUUIDs")
+    participants: list[str] = Field(..., description="List of participant PUUIDs")
 
 
 class MatchTimeline(BaseContract):
@@ -146,7 +146,7 @@ class MatchTimeline(BaseContract):
                 return participant.participant_id
         return None
 
-    def get_events_by_type(self, event_type: str) -> List[Dict[str, Any]]:
+    def get_events_by_type(self, event_type: str) -> list[dict[str, Any]]:
         """Get all events of a specific type."""
         events = []
         for frame in self.info.frames:
@@ -183,9 +183,9 @@ class MatchTimeline(BaseContract):
                         total_team_kills += 1
 
                         # Count participant involvement
-                        if killer_id == participant_id:
-                            participant_kills += 1
-                        elif participant_id in event.get("assistingParticipantIds", []):
+                        if killer_id == participant_id or participant_id in event.get(
+                            "assistingParticipantIds", []
+                        ):
                             participant_kills += 1
 
         if total_team_kills == 0:

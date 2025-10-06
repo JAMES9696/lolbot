@@ -75,13 +75,9 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
 
         # RSO endpoints
         self.rso_token_url = "https://auth.riotgames.com/token"
-        self.rso_userinfo_url = (
-            "https://americas.api.riotgames.com/riot/account/v1/accounts/me"
-        )
+        self.rso_userinfo_url = "https://americas.api.riotgames.com/riot/account/v1/accounts/me"
 
-        logger.info(
-            "Enhanced Riot API adapter initialized with production configuration"
-        )
+        logger.info("Enhanced Riot API adapter initialized with production configuration")
 
     async def _ensure_session(self) -> Any:  # returns aiohttp.ClientSession (untyped)
         """Ensure aiohttp session exists for RSO calls."""
@@ -107,10 +103,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
             Dictionary with PUUID and account info if successful, None otherwise.
             Keys: puuid, game_name, tag_line, display_name
         """
-        if (
-            not settings.security_rso_client_id
-            or not settings.security_rso_client_secret
-        ):
+        if not settings.security_rso_client_id or not settings.security_rso_client_secret:
             logger.error("RSO client credentials not configured")
             return None
 
@@ -144,9 +137,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
 
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(
-                        f"RSO token exchange failed: {response.status} - {error_text}"
-                    )
+                    logger.error(f"RSO token exchange failed: {response.status} - {error_text}")
                     return None
 
                 token_response = await response.json()
@@ -171,9 +162,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
 
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(
-                        f"Failed to fetch user info: {response.status} - {error_text}"
-                    )
+                    logger.error(f"Failed to fetch user info: {response.status} - {error_text}")
                     return None
 
                 user_data = await response.json()
@@ -214,9 +203,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
         """
         try:
             # Make a test API call to verify rate limiting
-            test_summoner = await asyncio.to_thread(
-                Summoner, name="Doublelift", region="NA"
-            )
+            test_summoner = await asyncio.to_thread(Summoner, name="Doublelift", region="NA")
 
             # Check Cassiopeia's rate limiter status
             rate_limiter_info = {
@@ -255,9 +242,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
                 "message": "Failed to verify rate limiting",
             }
 
-    async def get_summoner_by_puuid(
-        self, puuid: str, region: str = "NA"
-    ) -> SummonerDTO | None:
+    async def get_summoner_by_puuid(self, puuid: str, region: str = "NA") -> SummonerDTO | None:
         """Get summoner data by PUUID with enhanced error handling.
 
         Args:
@@ -275,9 +260,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
                 cass_region = self._convert_region(region)
 
                 # Cassiopeia handles rate limiting automatically
-                summoner = await asyncio.to_thread(
-                    Summoner, puuid=puuid, region=cass_region
-                )
+                summoner = await asyncio.to_thread(Summoner, puuid=puuid, region=cass_region)
 
                 # Load the summoner data (lazy loading)
                 await asyncio.to_thread(summoner.load)
@@ -315,18 +298,14 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
                     await asyncio.sleep(retry_delay * (2**attempt))
 
             except Exception as e:
-                logger.error(
-                    f"Unexpected error fetching summoner for PUUID {puuid}: {e}"
-                )
+                logger.error(f"Unexpected error fetching summoner for PUUID {puuid}: {e}")
                 if attempt == max_retries - 1:
                     return None
                 await asyncio.sleep(retry_delay * (2**attempt))
 
         return None
 
-    async def get_match_timeline(
-        self, match_id: str, region: str
-    ) -> dict[str, Any] | None:
+    async def get_match_timeline(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get detailed match timeline data with robust error handling.
 
         Includes automatic retry logic and comprehensive 429 handling.
@@ -388,9 +367,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
 
         return None
 
-    async def get_match_history(
-        self, puuid: str, region: str, count: int = 20
-    ) -> list[str]:
+    async def get_match_history(self, puuid: str, region: str, count: int = 20) -> list[str]:
         """Get recent match IDs with pagination support.
 
         Args:
@@ -405,15 +382,11 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
             cass_region = self._convert_region(region)
 
             # Get summoner
-            summoner = await asyncio.to_thread(
-                Summoner, puuid=puuid, region=cass_region
-            )
+            summoner = await asyncio.to_thread(Summoner, puuid=puuid, region=cass_region)
 
             # Get match history (Cassiopeia handles pagination)
-            match_history: Any = (
-                await asyncio.to_thread(  # MatchHistory (untyped library)
-                    summoner.match_history
-                )
+            match_history: Any = await asyncio.to_thread(  # MatchHistory (untyped library)
+                summoner.match_history
             )
 
             # Extract match IDs with rate limit awareness
@@ -434,9 +407,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
             logger.error(f"Error fetching match history for {puuid}: {e}")
             return []
 
-    async def get_match_details(
-        self, match_id: str, region: str
-    ) -> dict[str, Any] | None:
+    async def get_match_details(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get match details with enhanced error recovery.
 
         Args:
@@ -566,9 +537,7 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
                 "gameCreation": int(match.creation.timestamp() * 1000),
                 "gameDuration": match.duration.seconds,
                 "gameStartTimestamp": int(match.start.timestamp() * 1000),
-                "gameEndTimestamp": int(
-                    (match.start.timestamp() + match.duration.seconds) * 1000
-                ),
+                "gameEndTimestamp": int((match.start.timestamp() + match.duration.seconds) * 1000),
                 "gameMode": match.mode.value,
                 "gameType": match.type.value,
                 "gameVersion": match.version,

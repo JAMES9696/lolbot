@@ -150,11 +150,60 @@ class DatabaseAdapter(DatabasePort):
             """
             )
 
+            # Create match_analytics table for V1 scoring results (P3)
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS match_analytics (
+                    id SERIAL PRIMARY KEY,
+                    match_id VARCHAR(255) NOT NULL UNIQUE,
+                    puuid VARCHAR(255) NOT NULL,
+                    region VARCHAR(10) NOT NULL,
+
+                    -- Analysis status tracking
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    error_message TEXT,
+
+                    -- V1 Scoring Results (JSONB for flexibility)
+                    score_data JSONB NOT NULL,
+
+                    -- P4: LLM analysis results (to be populated later)
+                    llm_narrative TEXT,
+                    llm_metadata JSONB,
+
+                    -- Metadata
+                    algorithm_version VARCHAR(20) DEFAULT 'v1',
+                    processing_duration_ms FLOAT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+                    -- Foreign key to match_data
+                    CONSTRAINT fk_match_analytics_match
+                        FOREIGN KEY (match_id) REFERENCES match_data(match_id)
+                        ON DELETE CASCADE
+                );
+
+                -- Indexes for efficient queries
+                CREATE INDEX IF NOT EXISTS idx_match_analytics_match_id
+                    ON match_analytics(match_id);
+
+                CREATE INDEX IF NOT EXISTS idx_match_analytics_puuid
+                    ON match_analytics(puuid);
+
+                CREATE INDEX IF NOT EXISTS idx_match_analytics_status
+                    ON match_analytics(status);
+
+                CREATE INDEX IF NOT EXISTS idx_match_analytics_created
+                    ON match_analytics(created_at DESC);
+
+                -- GIN index for JSONB score_data queries
+                CREATE INDEX IF NOT EXISTS idx_match_analytics_score_data
+                    ON match_analytics USING gin (score_data);
+            """
+            )
+
             logger.info("Database schema initialized")
 
-    async def save_user_binding(
-        self, discord_id: str, puuid: str, summoner_name: str
-    ) -> bool:
+    async def save_user_binding(self, discord_id: str, puuid: str, summoner_name: str) -> bool:
         """Save Discord ID to PUUID binding.
 
         Args:
@@ -234,6 +283,41 @@ class DatabaseAdapter(DatabasePort):
         except Exception as e:
             logger.error(f"Error fetching user binding for {discord_id}: {e}")
             return None
+
+    async def delete_user_binding(self, discord_id: str) -> bool:
+        """Delete user binding by Discord ID.
+
+        Args:
+            discord_id: Discord user ID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    DELETE FROM user_bindings
+                    WHERE discord_id = $1
+                    """,
+                    discord_id,
+                )
+
+                # Check if any row was deleted
+                deleted = result.split()[-1] != "0"
+                if deleted:
+                    logger.info(f"Deleted binding for Discord ID {discord_id}")
+                else:
+                    logger.warning(f"No binding found for Discord ID {discord_id}")
+                return deleted
+
+        except Exception as e:
+            logger.error(f"Error deleting user binding for {discord_id}: {e}")
+            return False
 
     async def save_match_data(
         self,
@@ -391,9 +475,7 @@ class DatabaseAdapter(DatabasePort):
             logger.error(f"Error fetching recent matches for {puuid}: {e}")
             return []
 
-    async def update_match_analysis(
-        self, match_id: str, analysis_data: dict[str, Any]
-    ) -> bool:
+    async def update_match_analysis(self, match_id: str, analysis_data: dict[str, Any]) -> bool:
         """Update match with analysis results.
 
         Args:
@@ -424,6 +506,139 @@ class DatabaseAdapter(DatabasePort):
 
         except Exception as e:
             logger.error(f"Error updating analysis for {match_id}: {e}")
+            return False
+
+    async def save_analysis_result(
+        self,
+        match_id: str,
+        puuid: str,
+        score_data: dict[str, Any],
+        region: str = "na1",
+        status: str = "completed",
+        processing_duration_ms: float | None = None,
+        error_message: str | None = None,
+    ) -> bool:
+        """Save match analysis results to match_analytics table.
+
+        Args:
+            match_id: Match ID
+            puuid: Player PUUID who requested analysis
+            score_data: V1 scoring algorithm output (MatchAnalysisOutput)
+            region: Riot region
+            status: Analysis status ('pending', 'completed', 'failed')
+            processing_duration_ms: Time taken for analysis
+            error_message: Error message if status is 'failed'
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO match_analytics (
+                        match_id, puuid, region, status, score_data,
+                        processing_duration_ms, error_message, created_at, updated_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ON CONFLICT (match_id)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        score_data = EXCLUDED.score_data,
+                        processing_duration_ms = EXCLUDED.processing_duration_ms,
+                        error_message = EXCLUDED.error_message,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    match_id,
+                    puuid,
+                    region,
+                    status,
+                    json.dumps(score_data),
+                    processing_duration_ms,
+                    error_message,
+                    datetime.now(UTC),
+                    datetime.now(UTC),
+                )
+                logger.info(f"Saved analysis result for match {match_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error saving analysis result for {match_id}: {e}")
+            return False
+
+    async def get_analysis_result(self, match_id: str) -> dict[str, Any] | None:
+        """Retrieve analysis result by match ID.
+
+        Args:
+            match_id: Match ID to retrieve
+
+        Returns:
+            Analysis result if found, None otherwise
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return None
+
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT match_id, puuid, region, status, score_data,
+                           llm_narrative, llm_metadata, algorithm_version,
+                           processing_duration_ms, error_message,
+                           created_at, updated_at
+                    FROM match_analytics
+                    WHERE match_id = $1
+                    """,
+                    match_id,
+                )
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching analysis result for {match_id}: {e}")
+            return None
+
+    async def update_llm_narrative(
+        self, match_id: str, llm_narrative: str, llm_metadata: dict[str, Any] | None = None
+    ) -> bool:
+        """Update analysis with LLM-generated narrative (P4).
+
+        Args:
+            match_id: Match ID
+            llm_narrative: Generated narrative text from LLM
+            llm_metadata: Optional metadata about LLM generation
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE match_analytics
+                    SET llm_narrative = $1, llm_metadata = $2, updated_at = $3
+                    WHERE match_id = $4
+                    """,
+                    llm_narrative,
+                    json.dumps(llm_metadata) if llm_metadata else None,
+                    datetime.now(UTC),
+                    match_id,
+                )
+                logger.info(f"Updated LLM narrative for match {match_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error updating LLM narrative for {match_id}: {e}")
             return False
 
     async def health_check(self) -> bool:

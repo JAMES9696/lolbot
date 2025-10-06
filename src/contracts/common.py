@@ -3,9 +3,7 @@ Common data types and base models for Project Chimera.
 All models use Pydantic V2 with strict type checking.
 """
 
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -69,10 +67,10 @@ class Tier(str, Enum):
 class Division(str, Enum):
     """Ranked divisions."""
 
-    I = "I"
-    II = "II"
-    III = "III"
-    IV = "IV"
+    DIV_I = "I"
+    DIV_II = "II"
+    DIV_III = "III"
+    DIV_IV = "IV"
 
 
 class Position(BaseModel):
@@ -93,9 +91,7 @@ class BaseContract(BaseModel):
         # Use enum values in JSON
         use_enum_values=True,
         # Include all fields in JSON
-        json_schema_extra={
-            "examples": []
-        },
+        json_schema_extra={"examples": []},
         # Forbid extra fields to ensure data integrity
-        extra="forbid"
+        extra="forbid",
     )

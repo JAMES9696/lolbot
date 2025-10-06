@@ -22,12 +22,19 @@ class Settings(BaseSettings):
     riot_api_key: str = Field(..., validation_alias=AliasChoices("RIOT_API_KEY"))
     riot_api_base_url: str = Field("https://americas.api.riotgames.com", alias="RIOT_API_BASE_URL")
     riot_api_rate_limit_per_second: int = Field(20, alias="RIOT_API_RATE_LIMIT_PER_SECOND")
-    riot_api_rate_limit_per_two_minutes: int = Field(100, alias="RIOT_API_RATE_LIMIT_PER_TWO_MINUTES")
+    riot_api_rate_limit_per_two_minutes: int = Field(
+        100, alias="RIOT_API_RATE_LIMIT_PER_TWO_MINUTES"
+    )
 
     # Discord Configuration
-    discord_bot_token: str = Field(..., validation_alias=AliasChoices("DISCORD_BOT_TOKEN", "DISCORD_TOKEN"))
+    discord_bot_token: str = Field(
+        ..., validation_alias=AliasChoices("DISCORD_BOT_TOKEN", "DISCORD_TOKEN")
+    )
     discord_command_prefix: str = Field("/", alias="DISCORD_COMMAND_PREFIX")
     discord_defer_timeout: int = Field(3, alias="DISCORD_DEFER_TIMEOUT")
+    discord_application_id: str | None = Field(None, alias="DISCORD_APPLICATION_ID")
+    discord_guild_id: str | None = Field(None, alias="DISCORD_GUILD_ID")
+    bot_prefix: str = Field("!", alias="BOT_PREFIX")
 
     # Database Configuration
     database_url: str = Field("postgresql://localhost/lolbot", alias="DATABASE_URL")
@@ -58,11 +65,15 @@ class Settings(BaseSettings):
     app_debug: bool = Field(False, alias="APP_DEBUG")
     app_log_level: str = Field("INFO", alias="APP_LOG_LEVEL")
 
-    # Celery Configuration
+    # Celery Configuration (for /讲道理 async tasks)
     celery_broker_url: str = Field("redis://localhost:6379/0", alias="CELERY_BROKER_URL")
     celery_result_backend: str = Field("redis://localhost:6379/1", alias="CELERY_RESULT_BACKEND")
     celery_task_time_limit: int = Field(300, alias="CELERY_TASK_TIME_LIMIT")
     celery_task_soft_time_limit: int = Field(240, alias="CELERY_TASK_SOFT_TIME_LIMIT")
+    celery_worker_concurrency: int = Field(4, alias="CELERY_WORKER_CONCURRENCY")
+    celery_task_serializer: str = Field("json", alias="CELERY_TASK_SERIALIZER")
+    celery_result_serializer: str = Field("json", alias="CELERY_RESULT_SERIALIZER")
+    celery_accept_content: str = Field("json", alias="CELERY_ACCEPT_CONTENT")
 
     # Feature Flags
     feature_voice_enabled: bool = Field(False, alias="FEATURE_VOICE_ENABLED")
@@ -72,7 +83,9 @@ class Settings(BaseSettings):
     # Security Configuration
     security_rso_client_id: str | None = Field(None, alias="SECURITY_RSO_CLIENT_ID")
     security_rso_client_secret: str | None = Field(None, alias="SECURITY_RSO_CLIENT_SECRET")
-    security_rso_redirect_uri: str = Field("http://localhost:3000/callback", alias="SECURITY_RSO_REDIRECT_URI")
+    security_rso_redirect_uri: str = Field(
+        "http://localhost:3000/callback", alias="SECURITY_RSO_REDIRECT_URI"
+    )
 
     @property
     def is_production(self) -> bool:
@@ -88,5 +101,12 @@ class Settings(BaseSettings):
 # Global settings instance - will be loaded from environment
 # This will raise an error if required env vars are not set
 # In development, create a .env file with required settings
-settings = Settings(_env_file=".env")
+settings = Settings()
 
+
+def get_settings() -> Settings:
+    """Get the global settings instance.
+
+    This function provides dependency injection support for settings.
+    """
+    return settings

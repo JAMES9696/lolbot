@@ -7,35 +7,31 @@ All external dependencies must implement these interfaces.
 from abc import ABC, abstractmethod
 from typing import Any
 
+from src.core.rso_port import RSOPort
+
+__all__ = ["RiotAPIPort", "DatabasePort", "CachePort", "LLMPort", "TTSPort", "RSOPort"]
+
 
 class RiotAPIPort(ABC):
     """Port for Riot Games API operations."""
 
     @abstractmethod
-    async def get_summoner_by_discord_id(
-        self, discord_id: str
-    ) -> dict[str, Any] | None:
+    async def get_summoner_by_discord_id(self, discord_id: str) -> dict[str, Any] | None:
         """Get summoner data by Discord ID (requires prior binding)."""
         pass
 
     @abstractmethod
-    async def get_match_timeline(
-        self, match_id: str, region: str
-    ) -> dict[str, Any] | None:
+    async def get_match_timeline(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get detailed match timeline data from Match-V5 API."""
         pass
 
     @abstractmethod
-    async def get_match_history(
-        self, puuid: str, region: str, count: int = 20
-    ) -> list[str]:
+    async def get_match_history(self, puuid: str, region: str, count: int = 20) -> list[str]:
         """Get recent match IDs for a summoner."""
         pass
 
     @abstractmethod
-    async def get_match_details(
-        self, match_id: str, region: str
-    ) -> dict[str, Any] | None:
+    async def get_match_details(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get match details from Match-V5 API."""
         pass
 
@@ -44,9 +40,7 @@ class DatabasePort(ABC):
     """Port for database operations."""
 
     @abstractmethod
-    async def save_user_binding(
-        self, discord_id: str, puuid: str, summoner_name: str
-    ) -> bool:
+    async def save_user_binding(self, discord_id: str, puuid: str, summoner_name: str) -> bool:
         """Save Discord ID to PUUID binding."""
         pass
 
@@ -91,9 +85,7 @@ class LLMPort(ABC):
     """Port for Large Language Model operations."""
 
     @abstractmethod
-    async def analyze_match(
-        self, match_data: dict[str, Any], system_prompt: str
-    ) -> str:
+    async def analyze_match(self, match_data: dict[str, Any], system_prompt: str) -> str:
         """Analyze match data using LLM and return narrative analysis."""
         pass
 

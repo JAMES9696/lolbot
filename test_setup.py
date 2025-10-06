@@ -16,27 +16,44 @@ def test_imports():
 
     try:
         from src.config import Settings, get_settings
+
+        _ = Settings
+        _ = get_settings
+
         print("✓ Config module imported")
     except ImportError as e:
         print(f"✗ Failed to import config: {e}")
         return False
 
     try:
-        from src.contracts.user_binding import UserBinding, BindingRequest, BindingResponse
+        from src.contracts.user_binding import BindingRequest, BindingResponse, UserBinding
+
+        _ = BindingRequest
+        _ = BindingResponse
+        _ = UserBinding
+
         print("✓ User binding contracts imported")
     except ImportError as e:
         print(f"✗ Failed to import user_binding: {e}")
         return False
 
     try:
-        from src.contracts.discord_interactions import InteractionResponse, CommandName
+        from src.contracts.discord_interactions import CommandName, InteractionResponse
+
+        _ = CommandName
+        _ = InteractionResponse
+
         print("✓ Discord interaction contracts imported")
     except ImportError as e:
         print(f"✗ Failed to import discord_interactions: {e}")
         return False
 
     try:
-        from src.adapters.discord_adapter import DiscordAdapter, ChimeraBot
+        from src.adapters.discord_adapter import ChimeraBot, DiscordAdapter
+
+        _ = ChimeraBot
+        _ = DiscordAdapter
+
         print("✓ Discord adapter imported")
     except ImportError as e:
         print(f"✗ Failed to import discord_adapter: {e}")
@@ -49,15 +66,13 @@ def test_pydantic_models():
     """Test that Pydantic models work correctly."""
     print("\nTesting Pydantic models...")
 
-    from src.contracts.user_binding import UserBinding, BindingStatus
-    from src.contracts.discord_interactions import InteractionResponse, EmbedColor
+    from src.contracts.discord_interactions import EmbedColor, InteractionResponse
+    from src.contracts.user_binding import BindingStatus, UserBinding
 
     try:
         # Test UserBinding model
         binding = UserBinding(
-            discord_id="123456789012345678",
-            region="na1",
-            status=BindingStatus.PENDING
+            discord_id="123456789012345678", region="na1", status=BindingStatus.PENDING
         )
         print(f"✓ UserBinding created: {binding.discord_id}")
 
@@ -66,7 +81,7 @@ def test_pydantic_models():
             success=True,
             embed_title="Test",
             embed_description="Test description",
-            embed_color=EmbedColor.SUCCESS
+            embed_color=EmbedColor.SUCCESS,
         )
         print(f"✓ InteractionResponse created: {response.embed_title}")
 
@@ -87,10 +102,10 @@ def test_configuration():
         settings = Settings(
             DISCORD_BOT_TOKEN="MOCK_TOKEN_FOR_TESTING",
             DISCORD_APPLICATION_ID="123456789",
-            RIOT_API_KEY="MOCK_RIOT_KEY"
+            RIOT_API_KEY="MOCK_RIOT_KEY",
         )
 
-        print(f"✓ Settings object created")
+        print("✓ Settings object created")
         print(f"  - Bot token: {'*' * 10} (hidden)")
         print(f"  - Region: {settings.riot_region}")
         print(f"  - Debug mode: {settings.debug_mode}")

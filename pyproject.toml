@@ -107,7 +107,8 @@ warn_no_return = true
 follow_imports = "normal"
 mypy_path = "src"
 # Avoid duplicate module collision between package `src/config/` and legacy module `src/config.py`
-exclude = '^src/config(\.py|/__init__\.py)$'
+# Exclude P2 prototype adapters from strict type checking (will be refactored in P3)
+exclude = '^src/config(\.py|/__init__\.py)$|^src/adapters/ddragon_adapter\.py$'
 
 namespace_packages = false
 

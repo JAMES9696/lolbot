@@ -7,17 +7,21 @@ respects Retry-After headers to prevent API key suspension.
 
 import asyncio
 import logging
-from typing import Any
 from collections.abc import AsyncIterator
+from typing import Any
 
 import cassiopeia as cass
 from cassiopeia import Match, Summoner
 
 from src.config import settings
+from src.contracts import SummonerDTO
+from src.core.ports import RiotAPIPort
 
 
 class RiotAPIError(Exception):
-    def __init__(self, message: str, status_code: int | None = None, retry_after: int | None = None) -> None:
+    def __init__(
+        self, message: str, status_code: int | None = None, retry_after: int | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.retry_after = retry_after
@@ -26,8 +30,7 @@ class RiotAPIError(Exception):
 class RateLimitError(RiotAPIError):
     def __init__(self, retry_after: int) -> None:
         super().__init__("Rate limit exceeded", status_code=429, retry_after=retry_after)
-from src.contracts import SummonerDTO
-from src.core.ports import RiotAPIPort
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +70,7 @@ class RiotAPIAdapter(RiotAPIPort):
         cass.apply_settings(cass_settings)
         logger.info("Riot API adapter initialized with Cassiopeia")
 
-    async def get_summoner_by_discord_id(
-        self, discord_id: str
-    ) -> dict[str, Any] | None:
+    async def get_summoner_by_discord_id(self, discord_id: str) -> dict[str, Any] | None:
         """Get summoner data by Discord ID.
 
         This requires a prior binding in our database.
@@ -77,14 +78,10 @@ class RiotAPIAdapter(RiotAPIPort):
         """
         # This is a stub - actual implementation would query database
         # for the PUUID associated with this Discord ID
-        logger.warning(
-            f"get_summoner_by_discord_id not fully implemented for {discord_id}"
-        )
+        logger.warning(f"get_summoner_by_discord_id not fully implemented for {discord_id}")
         return None
 
-    async def get_summoner_by_puuid(
-        self, puuid: str, region: str = "NA"
-    ) -> SummonerDTO | None:
+    async def get_summoner_by_puuid(self, puuid: str, region: str = "NA") -> SummonerDTO | None:
         """Get summoner data by PUUID.
 
         Args:
@@ -99,9 +96,7 @@ class RiotAPIAdapter(RiotAPIPort):
             cass_region = self._convert_region(region)
 
             # Cassiopeia handles rate limiting automatically
-            summoner = await asyncio.to_thread(
-                Summoner, puuid=puuid, region=cass_region
-            )
+            summoner = await asyncio.to_thread(Summoner, puuid=puuid, region=cass_region)
 
             # Load the summoner data (lazy loading)
             await asyncio.to_thread(summoner.load)
@@ -121,9 +116,7 @@ class RiotAPIAdapter(RiotAPIPort):
             logger.error(f"Error fetching summoner for PUUID {puuid}: {e}")
             return None
 
-    async def get_match_timeline(
-        self, match_id: str, region: str
-    ) -> dict[str, Any] | None:
+    async def get_match_timeline(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get detailed match timeline data.
 
         Cassiopeia automatically handles:
@@ -160,17 +153,17 @@ class RiotAPIAdapter(RiotAPIPort):
         except cass.datastores.riotapi.common.APIError as e:
             if e.code == 429:
                 retry_after = getattr(e, "retry_after", None) or 60
-                raise RateLimitError(retry_after)
+                raise RateLimitError(retry_after) from e
             elif e.code == 403:
-                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403)
+                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403) from e
             else:
-                raise RiotAPIError(f"API error fetching timeline for {match_id}: {e}", status_code=e.code)
+                raise RiotAPIError(
+                    f"API error fetching timeline for {match_id}: {e}", status_code=e.code
+                ) from e
         except Exception as e:
-            raise RiotAPIError(f"Unexpected error fetching timeline for {match_id}: {e}")
+            raise RiotAPIError(f"Unexpected error fetching timeline for {match_id}: {e}") from e
 
-    async def get_match_history(
-        self, puuid: str, region: str, count: int = 20
-    ) -> list[str]:
+    async def get_match_history(self, puuid: str, region: str, count: int = 20) -> list[str]:
         """Get recent match IDs for a summoner.
 
         Args:
@@ -185,15 +178,11 @@ class RiotAPIAdapter(RiotAPIPort):
             cass_region = self._convert_region(region)
 
             # Get summoner
-            summoner = await asyncio.to_thread(
-                Summoner, puuid=puuid, region=cass_region
-            )
+            summoner = await asyncio.to_thread(Summoner, puuid=puuid, region=cass_region)
 
             # Get match history (Cassiopeia handles pagination)
-            match_history: Any = (
-                await asyncio.to_thread(  # MatchHistory (untyped library)
-                    summoner.match_history
-                )
+            match_history: Any = await asyncio.to_thread(  # MatchHistory (untyped library)
+                summoner.match_history
             )
 
             # Extract match IDs
@@ -208,9 +197,7 @@ class RiotAPIAdapter(RiotAPIPort):
             logger.error(f"Error fetching match history for {puuid}: {e}")
             return []
 
-    async def get_match_details(
-        self, match_id: str, region: str
-    ) -> dict[str, Any] | None:
+    async def get_match_details(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get match details from Match-V5 API.
 
         Args:
@@ -237,13 +224,15 @@ class RiotAPIAdapter(RiotAPIPort):
         except cass.datastores.riotapi.common.APIError as e:
             if e.code == 429:
                 retry_after = getattr(e, "retry_after", None) or 60
-                raise RateLimitError(retry_after)
+                raise RateLimitError(retry_after) from e
             elif e.code == 403:
-                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403)
+                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403) from e
             else:
-                raise RiotAPIError(f"API error fetching match {match_id}: {e}", status_code=e.code)
+                raise RiotAPIError(
+                    f"API error fetching match {match_id}: {e}", status_code=e.code
+                ) from e
         except Exception as e:
-            raise RiotAPIError(f"Unexpected error fetching match {match_id}: {e}")
+            raise RiotAPIError(f"Unexpected error fetching match {match_id}: {e}") from e
 
     def _convert_region(self, region: str) -> str:
         """Convert region string to Cassiopeia format.
@@ -269,9 +258,7 @@ class RiotAPIAdapter(RiotAPIPort):
         }
         return region_mapping.get(region.lower(), "NA")
 
-    def _extract_timeline_data(
-        self, timeline: Any
-    ) -> dict[str, Any]:  # Timeline (untyped library)
+    def _extract_timeline_data(self, timeline: Any) -> dict[str, Any]:  # Timeline (untyped library)
         """Extract timeline data from Cassiopeia Timeline object.
 
         Args:
@@ -325,9 +312,7 @@ class RiotAPIAdapter(RiotAPIPort):
 
         return timeline_data
 
-    def _extract_match_data(
-        self, match: Any
-    ) -> dict[str, Any]:  # Match (untyped library)
+    def _extract_match_data(self, match: Any) -> dict[str, Any]:  # Match (untyped library)
         """Extract match data from Cassiopeia Match object.
 
         Args:
@@ -348,9 +333,7 @@ class RiotAPIAdapter(RiotAPIPort):
                 "gameCreation": int(match.creation.timestamp() * 1000),
                 "gameDuration": match.duration.seconds,
                 "gameStartTimestamp": int(match.start.timestamp() * 1000),
-                "gameEndTimestamp": int(
-                    (match.start.timestamp() + match.duration.seconds) * 1000
-                ),
+                "gameEndTimestamp": int((match.start.timestamp() + match.duration.seconds) * 1000),
                 "gameMode": match.mode.value,
                 "gameName": match.name if hasattr(match, "name") else "",
                 "gameType": match.type.value,

@@ -2,32 +2,23 @@
 Test file to validate our Pydantic V2 data contracts.
 """
 
-import json
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from src.contracts import (
     ChampionKillEvent,
-    ChampionStats,
-    DamageStats,
     EventType,
-    Frame,
     LeagueEntry,
-    Match,
     MatchInfo,
     MatchTimeline,
     Participant,
     ParticipantFrame,
     Position,
     SummonerProfile,
-    Team,
     Tier,
-    TimelineInfo,
-    TimelineMetadata,
-    TimelineParticipant,
 )
 
 
@@ -208,7 +199,7 @@ def test_participant_kda() -> None:
 
 def test_match_info_teams() -> None:
     """Test MatchInfo with teams."""
-    match_data: Dict[str, Any] = {
+    match_data: dict[str, Any] = {
         "game_creation": 1704067200000,
         "game_duration": 1800,
         "game_id": 123456,

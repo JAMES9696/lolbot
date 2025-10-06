@@ -38,7 +38,9 @@ structlog.configure(
             ],
         ),
         structlog.processors.dict_tracebacks,
-        structlog.dev.ConsoleRenderer() if sys.stderr.isatty() else structlog.processors.JSONRenderer(),  # type: ignore[list-item]
+        structlog.dev.ConsoleRenderer()
+        if sys.stderr.isatty()
+        else structlog.processors.JSONRenderer(),  # type: ignore[list-item]
     ],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
@@ -52,7 +54,9 @@ logger = structlog.get_logger()
 F = TypeVar("F", bound=Callable[..., Any])
 
 # Sensitive data redaction pattern
-_SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|password|pass|authorization|auth|client_secret)", re.IGNORECASE)
+_SENSITIVE_KEY_RE = re.compile(
+    r"(token|key|secret|password|pass|authorization|auth|client_secret)", re.IGNORECASE
+)
 
 
 def _mask_scalar(value: Any) -> Any:
@@ -66,7 +70,10 @@ def _mask_scalar(value: Any) -> Any:
 
 def _redact_obj(obj: Any) -> Any:
     if isinstance(obj, dict):
-        return {k: (_mask_scalar(v) if _SENSITIVE_KEY_RE.search(str(k)) else _redact_obj(v)) for k, v in obj.items()}
+        return {
+            k: (_mask_scalar(v) if _SENSITIVE_KEY_RE.search(str(k)) else _redact_obj(v))
+            for k, v in obj.items()
+        }
     if isinstance(obj, list):
         return [_redact_obj(i) for i in obj]
     return obj
@@ -88,7 +95,9 @@ class FunctionTrace(BaseModel):
     module: str = Field(description="Module where function is defined")
     execution_id: str = Field(description="Unique execution ID")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    duration_ms: float | None = Field(default=None, description="Execution duration in milliseconds")
+    duration_ms: float | None = Field(
+        default=None, description="Execution duration in milliseconds"
+    )
 
     # Input/Output
     args: list[Any] = Field(default_factory=list, description="Positional arguments")
@@ -192,7 +201,9 @@ def llm_debug_wrapper(
             # Capture arguments if enabled
             if capture_args:
                 trace.args = [_serialize_value(arg, max_arg_length) for arg in args]
-                trace.kwargs = {k: _safe_serialize_kv(k, v, max_arg_length) for k, v in kwargs.items()}
+                trace.kwargs = {
+                    k: _safe_serialize_kv(k, v, max_arg_length) for k, v in kwargs.items()
+                }
 
             # Bind context variables for correlation
             bind_contextvars(execution_id=execution_id)
@@ -275,7 +286,9 @@ def llm_debug_wrapper(
             # Capture arguments if enabled
             if capture_args:
                 trace.args = [_serialize_value(arg, max_arg_length) for arg in args]
-                trace.kwargs = {k: _safe_serialize_kv(k, v, max_arg_length) for k, v in kwargs.items()}
+                trace.kwargs = {
+                    k: _safe_serialize_kv(k, v, max_arg_length) for k, v in kwargs.items()
+                }
 
             # Bind context variables for correlation
             bind_contextvars(execution_id=execution_id)

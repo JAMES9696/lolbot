@@ -3,11 +3,11 @@ Match information data contracts for Riot API Match-V5.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import Field, computed_field
 
-from .common import BaseContract, Platform, Queue
+from .common import BaseContract
 
 
 class Ban(BaseContract):
@@ -22,7 +22,7 @@ class Team(BaseContract):
 
     team_id: int = Field(..., description="100 (blue) or 200 (red)")
     win: bool = Field(..., description="Whether this team won")
-    bans: List[Ban] = Field(default_factory=list, description="Champion bans")
+    bans: list[Ban] = Field(default_factory=list, description="Champion bans")
 
     # Objectives
     baron_kills: int = Field(0, ge=0)
@@ -47,8 +47,8 @@ class Team(BaseContract):
 class Perks(BaseContract):
     """Rune/Perk information for a participant."""
 
-    stat_perks: Dict[str, Any] = Field(..., description="Stat shards")
-    styles: List[Dict[str, Any]] = Field(..., description="Primary and secondary rune trees")
+    stat_perks: dict[str, Any] = Field(..., description="Stat shards")
+    styles: list[dict[str, Any]] = Field(..., description="Primary and secondary rune trees")
 
 
 class Challenges(BaseContract):
@@ -199,7 +199,7 @@ class Participant(BaseContract):
     challenges: Challenges | None = Field(None)
 
     # Missions/Bounties
-    missions: Dict[str, Any] | None = Field(None)
+    missions: dict[str, Any] | None = Field(None)
     placement: int | None = Field(None, ge=1, le=10)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -219,7 +219,7 @@ class Participant(BaseContract):
         return None
 
     @property
-    def items(self) -> List[int]:
+    def items(self) -> list[int]:
         """Get list of all items (excluding empty slots)."""
         items = []
         for i in range(7):
@@ -235,7 +235,9 @@ class MatchInfo(BaseContract):
     # Metadata
     game_creation: int = Field(..., description="Game creation timestamp (epoch milliseconds)")
     game_duration: int = Field(..., description="Game duration in seconds")
-    game_end_timestamp: int | None = Field(None, description="Game end timestamp (epoch milliseconds)")
+    game_end_timestamp: int | None = Field(
+        None, description="Game end timestamp (epoch milliseconds)"
+    )
     game_id: int = Field(..., description="Game ID")
     game_mode: str = Field(..., description="Game mode")
     game_name: str = Field(..., description="Game name")
@@ -248,8 +250,8 @@ class MatchInfo(BaseContract):
     tournament_code: str | None = Field(None, description="Tournament code if applicable")
 
     # Teams and participants
-    teams: List[Team] = Field(..., min_length=2, max_length=2)
-    participants: List[Participant] = Field(..., min_length=10, max_length=10)
+    teams: list[Team] = Field(..., min_length=2, max_length=2)
+    participants: list[Participant] = Field(..., min_length=10, max_length=10)
 
     @property
     def game_creation_date(self) -> datetime:
@@ -283,7 +285,7 @@ class MatchInfo(BaseContract):
                 return participant
         return None
 
-    def get_team_participants(self, team_id: int) -> List[Participant]:
+    def get_team_participants(self, team_id: int) -> list[Participant]:
         """Get all participants for a team."""
         return [p for p in self.participants if p.team_id == team_id]
 
@@ -293,7 +295,7 @@ class MatchMetadata(BaseContract):
 
     data_version: str = Field(..., description="Data version")
     match_id: str = Field(..., description="Match ID")
-    participants: List[str] = Field(..., description="List of participant PUUIDs")
+    participants: list[str] = Field(..., description="List of participant PUUIDs")
 
 
 class Match(BaseContract):
