@@ -85,7 +85,8 @@ class DiscordAdapter:
     def __init__(self) -> None:
         """Initialize the Discord adapter."""
         self.settings = get_settings()
-        self.bot = ChimeraBot(command_prefix=self.settings.bot_prefix)
+        app_id = int(self.settings.discord_application_id) if self.settings.discord_application_id else None
+        self.bot = ChimeraBot(command_prefix=self.settings.bot_prefix, application_id=app_id)
         self._setup_commands()
         self._setup_event_handlers()
 
