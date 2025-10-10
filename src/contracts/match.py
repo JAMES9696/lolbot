@@ -2,7 +2,7 @@
 Match information data contracts for Riot API Match-V5.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 from pydantic import Field, computed_field
@@ -82,13 +82,13 @@ class Participant(BaseContract):
     summoner_name: str = Field(..., description="Summoner name")
     riot_id_game_name: str | None = Field(None, description="Riot ID game name")
     riot_id_tagline: str | None = Field(None, description="Riot ID tagline")
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     team_id: int = Field(..., description="100 (blue) or 200 (red)")
 
     # Champion and role
     champion_id: int = Field(..., description="Champion ID")
     champion_name: str = Field(..., description="Champion name")
-    champion_level: int = Field(..., ge=1, le=18)
+    champion_level: int = Field(..., ge=1, le=30)  # Arena mode can exceed 18
     champion_transform: int | None = Field(None, description="Champion transformation (e.g., Kayn)")
     team_position: str | None = Field(None, description="Assigned position")
     individual_position: str | None = Field(None, description="Detected position")
@@ -256,18 +256,18 @@ class MatchInfo(BaseContract):
     @property
     def game_creation_date(self) -> datetime:
         """Convert game creation to datetime."""
-        return datetime.fromtimestamp(self.game_creation / 1000)
+        return datetime.fromtimestamp(self.game_creation / 1000, tz=UTC)
 
     @property
     def game_start_date(self) -> datetime:
         """Convert game start to datetime."""
-        return datetime.fromtimestamp(self.game_start_timestamp / 1000)
+        return datetime.fromtimestamp(self.game_start_timestamp / 1000, tz=UTC)
 
     @property
     def game_end_date(self) -> datetime | None:
         """Convert game end to datetime."""
         if self.game_end_timestamp:
-            return datetime.fromtimestamp(self.game_end_timestamp / 1000)
+            return datetime.fromtimestamp(self.game_end_timestamp / 1000, tz=UTC)
         return None
 
     @property

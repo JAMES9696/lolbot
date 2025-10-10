@@ -16,7 +16,7 @@ import cassiopeia as cass
 from cassiopeia import Match, Summoner
 from cassiopeia.datastores.riotapi.common import APIError
 
-from src.config import settings
+from src.config.settings import settings
 from src.contracts import SummonerDTO
 from src.core.ports import RiotAPIPort
 

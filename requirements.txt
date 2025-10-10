@@ -6,6 +6,7 @@ python-dotenv>=1.0.0  # Environment variable loading
 
 # Async Support
 aiohttp>=3.9.0  # Async HTTP client (required by discord.py)
+PyNaCl>=1.5.0  # Required for Discord voice (encryption)
 
 # Database (for future integration)
 asyncpg>=0.29.0  # PostgreSQL async driver
@@ -33,6 +34,7 @@ pre-commit>=3.5.0  # Git hooks
 # Logging & Monitoring
 structlog>=23.2.0  # Structured logging
 python-json-logger>=2.0.7  # JSON logging
+prometheus-client>=0.20.0  # /metrics exporter
 
 # Utilities
 python-dateutil>=2.8.2  # Date/time utilities

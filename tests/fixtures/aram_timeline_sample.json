@@ -1,0 +1,497 @@
+{
+  "metadata": {
+    "dataVersion": "2",
+    "matchId": "NA1_4500000001",
+    "participants": [
+      "player-puuid-1",
+      "player-puuid-2",
+      "player-puuid-3",
+      "player-puuid-4",
+      "player-puuid-5",
+      "enemy-puuid-1",
+      "enemy-puuid-2",
+      "enemy-puuid-3",
+      "enemy-puuid-4",
+      "enemy-puuid-5"
+    ]
+  },
+  "info": {
+    "frameInterval": 60000,
+    "frames": [
+      {
+        "timestamp": 60000,
+        "participantFrames": {
+          "1": {
+            "participantId": 1,
+            "puuid": "player-puuid-1",
+            "totalGold": 1500,
+            "level": 3,
+            "xp": 850,
+            "currentGold": 200,
+            "position": {"x": 6500, "y": 6500},
+            "totalDamageDealtToChampions": 450,
+            "damageTaken": 320
+          },
+          "2": {
+            "participantId": 2,
+            "puuid": "player-puuid-2",
+            "totalGold": 1450,
+            "level": 3,
+            "xp": 820,
+            "currentGold": 150,
+            "position": {"x": 6480, "y": 6520},
+            "totalDamageDealtToChampions": 380,
+            "damageTaken": 280
+          },
+          "3": {
+            "participantId": 3,
+            "puuid": "player-puuid-3",
+            "totalGold": 1400,
+            "level": 3,
+            "xp": 800,
+            "currentGold": 100,
+            "position": {"x": 6450, "y": 6480},
+            "totalDamageDealtToChampions": 520,
+            "damageTaken": 450
+          },
+          "4": {
+            "participantId": 4,
+            "puuid": "player-puuid-4",
+            "totalGold": 1380,
+            "level": 2,
+            "xp": 750,
+            "currentGold": 80,
+            "position": {"x": 6420, "y": 6500},
+            "totalDamageDealtToChampions": 290,
+            "damageTaken": 380
+          },
+          "5": {
+            "participantId": 5,
+            "puuid": "player-puuid-5",
+            "totalGold": 1420,
+            "level": 3,
+            "xp": 830,
+            "currentGold": 120,
+            "position": {"x": 6500, "y": 6450},
+            "totalDamageDealtToChampions": 410,
+            "damageTaken": 340
+          },
+          "6": {
+            "participantId": 6,
+            "puuid": "enemy-puuid-1",
+            "totalGold": 1480,
+            "level": 3,
+            "xp": 840,
+            "currentGold": 180,
+            "position": {"x": 8500, "y": 8500},
+            "totalDamageDealtToChampions": 470,
+            "damageTaken": 310
+          },
+          "7": {
+            "participantId": 7,
+            "puuid": "enemy-puuid-2",
+            "totalGold": 1460,
+            "level": 3,
+            "xp": 825,
+            "currentGold": 160,
+            "position": {"x": 8480, "y": 8520},
+            "totalDamageDealtToChampions": 390,
+            "damageTaken": 290
+          },
+          "8": {
+            "participantId": 8,
+            "puuid": "enemy-puuid-3",
+            "totalGold": 1410,
+            "level": 3,
+            "xp": 810,
+            "currentGold": 110,
+            "position": {"x": 8450, "y": 8480},
+            "totalDamageDealtToChampions": 530,
+            "damageTaken": 460
+          },
+          "9": {
+            "participantId": 9,
+            "puuid": "enemy-puuid-4",
+            "totalGold": 1390,
+            "level": 2,
+            "xp": 760,
+            "currentGold": 90,
+            "position": {"x": 8420, "y": 8500},
+            "totalDamageDealtToChampions": 300,
+            "damageTaken": 390
+          },
+          "10": {
+            "participantId": 10,
+            "puuid": "enemy-puuid-5",
+            "totalGold": 1430,
+            "level": 3,
+            "xp": 835,
+            "currentGold": 130,
+            "position": {"x": 8500, "y": 8450},
+            "totalDamageDealtToChampions": 420,
+            "damageTaken": 350
+          }
+        },
+        "events": [
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 58000,
+            "killerId": 1,
+            "victimId": 7,
+            "position": {"x": 7200, "y": 7200},
+            "assistingParticipantIds": [2, 3]
+          }
+        ]
+      },
+      {
+        "timestamp": 180000,
+        "participantFrames": {
+          "1": {
+            "participantId": 1,
+            "puuid": "player-puuid-1",
+            "totalGold": 3200,
+            "level": 6,
+            "xp": 2450,
+            "currentGold": 450,
+            "position": {"x": 7500, "y": 7500},
+            "totalDamageDealtToChampions": 2850,
+            "damageTaken": 1920
+          },
+          "2": {
+            "participantId": 2,
+            "puuid": "player-puuid-2",
+            "totalGold": 3150,
+            "level": 6,
+            "xp": 2420,
+            "currentGold": 400,
+            "position": {"x": 7480, "y": 7520},
+            "totalDamageDealtToChampions": 2380,
+            "damageTaken": 1780
+          },
+          "3": {
+            "participantId": 3,
+            "puuid": "player-puuid-3",
+            "totalGold": 3100,
+            "level": 6,
+            "xp": 2400,
+            "currentGold": 350,
+            "position": {"x": 7450, "y": 7480},
+            "totalDamageDealtToChampions": 3520,
+            "damageTaken": 2450
+          },
+          "4": {
+            "participantId": 4,
+            "puuid": "player-puuid-4",
+            "totalGold": 3080,
+            "level": 5,
+            "xp": 2350,
+            "currentGold": 330,
+            "position": {"x": 7420, "y": 7500},
+            "totalDamageDealtToChampions": 1890,
+            "damageTaken": 1980
+          },
+          "5": {
+            "participantId": 5,
+            "puuid": "player-puuid-5",
+            "totalGold": 3120,
+            "level": 6,
+            "xp": 2430,
+            "currentGold": 370,
+            "position": {"x": 7500, "y": 7450},
+            "totalDamageDealtToChampions": 2710,
+            "damageTaken": 1840
+          },
+          "6": {
+            "participantId": 6,
+            "puuid": "enemy-puuid-1",
+            "totalGold": 3180,
+            "level": 6,
+            "xp": 2440,
+            "currentGold": 430,
+            "position": {"x": 7500, "y": 7500},
+            "totalDamageDealtToChampions": 2970,
+            "damageTaken": 1910
+          },
+          "7": {
+            "participantId": 7,
+            "puuid": "enemy-puuid-2",
+            "totalGold": 3160,
+            "level": 6,
+            "xp": 2425,
+            "currentGold": 410,
+            "position": {"x": 7480, "y": 7520},
+            "totalDamageDealtToChampions": 2490,
+            "damageTaken": 1790
+          },
+          "8": {
+            "participantId": 8,
+            "puuid": "enemy-puuid-3",
+            "totalGold": 3110,
+            "level": 6,
+            "xp": 2410,
+            "currentGold": 360,
+            "position": {"x": 7450, "y": 7480},
+            "totalDamageDealtToChampions": 3630,
+            "damageTaken": 2460
+          },
+          "9": {
+            "participantId": 9,
+            "puuid": "enemy-puuid-4",
+            "totalGold": 3090,
+            "level": 5,
+            "xp": 2360,
+            "currentGold": 340,
+            "position": {"x": 7420, "y": 7500},
+            "totalDamageDealtToChampions": 2000,
+            "damageTaken": 1990
+          },
+          "10": {
+            "participantId": 10,
+            "puuid": "enemy-puuid-5",
+            "totalGold": 3130,
+            "level": 6,
+            "xp": 2435,
+            "currentGold": 380,
+            "position": {"x": 7500, "y": 7450},
+            "totalDamageDealtToChampions": 2820,
+            "damageTaken": 1850
+          }
+        },
+        "events": [
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 175000,
+            "killerId": 3,
+            "victimId": 8,
+            "position": {"x": 7450, "y": 7480},
+            "assistingParticipantIds": [1, 2, 5]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 176500,
+            "killerId": 6,
+            "victimId": 4,
+            "position": {"x": 7420, "y": 7500},
+            "assistingParticipantIds": [7, 10]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 178000,
+            "killerId": 1,
+            "victimId": 9,
+            "position": {"x": 7440, "y": 7490},
+            "assistingParticipantIds": [2, 3]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 179200,
+            "killerId": 10,
+            "victimId": 2,
+            "position": {"x": 7480, "y": 7520},
+            "assistingParticipantIds": [6, 7]
+          }
+        ]
+      },
+      {
+        "timestamp": 420000,
+        "participantFrames": {
+          "1": {
+            "participantId": 1,
+            "puuid": "player-puuid-1",
+            "totalGold": 6800,
+            "level": 11,
+            "xp": 6250,
+            "currentGold": 850,
+            "position": {"x": 8800, "y": 8800},
+            "totalDamageDealtToChampions": 8450,
+            "damageTaken": 5920
+          },
+          "2": {
+            "participantId": 2,
+            "puuid": "player-puuid-2",
+            "totalGold": 6750,
+            "level": 11,
+            "xp": 6220,
+            "currentGold": 800,
+            "position": {"x": 8780, "y": 8820},
+            "totalDamageDealtToChampions": 7380,
+            "damageTaken": 5580
+          },
+          "3": {
+            "participantId": 3,
+            "puuid": "player-puuid-3",
+            "totalGold": 6700,
+            "level": 11,
+            "xp": 6200,
+            "currentGold": 750,
+            "position": {"x": 8750, "y": 8780},
+            "totalDamageDealtToChampions": 11520,
+            "damageTaken": 7450
+          },
+          "4": {
+            "participantId": 4,
+            "puuid": "player-puuid-4",
+            "totalGold": 6680,
+            "level": 10,
+            "xp": 6150,
+            "currentGold": 730,
+            "position": {"x": 8720, "y": 8800},
+            "totalDamageDealtToChampions": 5890,
+            "damageTaken": 6180
+          },
+          "5": {
+            "participantId": 5,
+            "puuid": "player-puuid-5",
+            "totalGold": 6720,
+            "level": 11,
+            "xp": 6230,
+            "currentGold": 770,
+            "position": {"x": 8800, "y": 8750},
+            "totalDamageDealtToChampions": 8710,
+            "damageTaken": 5640
+          },
+          "6": {
+            "participantId": 6,
+            "puuid": "enemy-puuid-1",
+            "totalGold": 6780,
+            "level": 11,
+            "xp": 6240,
+            "currentGold": 830,
+            "position": {"x": 8800, "y": 8800},
+            "totalDamageDealtToChampions": 8970,
+            "damageTaken": 5910
+          },
+          "7": {
+            "participantId": 7,
+            "puuid": "enemy-puuid-2",
+            "totalGold": 6760,
+            "level": 11,
+            "xp": 6225,
+            "currentGold": 810,
+            "position": {"x": 8780, "y": 8820},
+            "totalDamageDealtToChampions": 7690,
+            "damageTaken": 5590
+          },
+          "8": {
+            "participantId": 8,
+            "puuid": "enemy-puuid-3",
+            "totalGold": 6710,
+            "level": 11,
+            "xp": 6210,
+            "currentGold": 760,
+            "position": {"x": 8750, "y": 8780},
+            "totalDamageDealtToChampions": 11830,
+            "damageTaken": 7460
+          },
+          "9": {
+            "participantId": 9,
+            "puuid": "enemy-puuid-4",
+            "totalGold": 6690,
+            "level": 10,
+            "xp": 6160,
+            "currentGold": 740,
+            "position": {"x": 8720, "y": 8800},
+            "totalDamageDealtToChampions": 6200,
+            "damageTaken": 6190
+          },
+          "10": {
+            "participantId": 10,
+            "puuid": "enemy-puuid-5",
+            "totalGold": 6730,
+            "level": 11,
+            "xp": 6235,
+            "currentGold": 780,
+            "position": {"x": 8800, "y": 8750},
+            "totalDamageDealtToChampions": 9020,
+            "damageTaken": 5650
+          }
+        },
+        "events": [
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 415000,
+            "killerId": 8,
+            "victimId": 1,
+            "position": {"x": 8800, "y": 8800},
+            "assistingParticipantIds": [6, 10]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 416200,
+            "killerId": 3,
+            "victimId": 7,
+            "position": {"x": 8780, "y": 8820},
+            "assistingParticipantIds": [2, 5]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 417500,
+            "killerId": 6,
+            "victimId": 4,
+            "position": {"x": 8720, "y": 8800},
+            "assistingParticipantIds": [8, 9, 10]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 418800,
+            "killerId": 3,
+            "victimId": 9,
+            "position": {"x": 8740, "y": 8790},
+            "assistingParticipantIds": [2, 5]
+          },
+          {
+            "type": "CHAMPION_KILL",
+            "timestamp": 419500,
+            "killerId": 8,
+            "victimId": 2,
+            "position": {"x": 8780, "y": 8820},
+            "assistingParticipantIds": [6, 10]
+          }
+        ]
+      }
+    ],
+    "gameId": 4500000001,
+    "participants": [
+      {
+        "participantId": 1,
+        "puuid": "player-puuid-1"
+      },
+      {
+        "participantId": 2,
+        "puuid": "player-puuid-2"
+      },
+      {
+        "participantId": 3,
+        "puuid": "player-puuid-3"
+      },
+      {
+        "participantId": 4,
+        "puuid": "player-puuid-4"
+      },
+      {
+        "participantId": 5,
+        "puuid": "player-puuid-5"
+      },
+      {
+        "participantId": 6,
+        "puuid": "enemy-puuid-1"
+      },
+      {
+        "participantId": 7,
+        "puuid": "enemy-puuid-2"
+      },
+      {
+        "participantId": 8,
+        "puuid": "enemy-puuid-3"
+      },
+      {
+        "participantId": 9,
+        "puuid": "enemy-puuid-4"
+      },
+      {
+        "participantId": 10,
+        "puuid": "enemy-puuid-5"
+      }
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "title": "Chimera Cost Dashboard",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "LLM Cost (Last 24h)",
+      "datasource": "Prometheus",
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(chimera_llm_cost_usd_total[24h]))"}
+      ],
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "Avg Cost per Analysis",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(increase(chimera_llm_cost_usd_total[1h])))/(sum(increase(chimera_request_total{outcome=\"success\"}[1h]))+1e-9)"
+        }
+      ],
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "Token Usage Rate (prompt vs completion)",
+      "datasource": "Prometheus",
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(chimera_llm_tokens_total{type=\"prompt\"}[5m])) by (model)", "legendFormat": "prompt {{model}}"},
+        {"refId": "B", "expr": "sum(rate(chimera_llm_tokens_total{type=\"completion\"}[5m])) by (model)", "legendFormat": "completion {{model}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}
+    },
+    {
+      "type": "stat",
+      "title": "Projected Monthly Cost",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chimera_llm_cost_usd_total[1h]))*3600*24*30"
+        }
+      ],
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "Cost Rate (USD/s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(chimera_llm_cost_usd_total[5m])) by (model)", "legendFormat": "{{model}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}
+    }
+  ]
+}

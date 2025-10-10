@@ -1,19 +1,23 @@
-"""Riot API adapter using Cassiopeia library.
+"""Riot API adapter using Cassiopeia + Match-V5 REST.
 
-This adapter handles all Riot API interactions with automatic rate limiting,
-caching, and error handling. Cassiopeia provides built-in rate limiting that
-respects Retry-After headers to prevent API key suspension.
+Provides:
+- Account-V1 (REST)
+- Match-V5 IDs/Match/Timeline (REST)
+- Summoner by PUUID (Cassiopeia)
+
+Implements RiotAPIPort with consistent async semantics and session reuse.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
 from typing import Any
 
 import cassiopeia as cass
-from cassiopeia import Match, Summoner
+from cassiopeia import Summoner
 
-from src.config import settings
+from src.config.settings import settings
 from src.contracts import SummonerDTO
 from src.core.ports import RiotAPIPort
 
@@ -36,72 +40,84 @@ logger = logging.getLogger(__name__)
 
 
 class RiotAPIAdapter(RiotAPIPort):
-    """Riot API adapter implementation using Cassiopeia.
-
-    Cassiopeia provides:
-    - Automatic rate limiting with Retry-After header respect
-    - Built-in caching to reduce API calls
-    - Automatic retries on transient failures
-    - Lazy loading of data
-    """
-
     def __init__(self) -> None:
-        """Initialize Cassiopeia with production-ready configuration."""
-        # Configure Cassiopeia settings
-        cass_settings = {
-            "api_key": settings.riot_api_key,
-            "default_region": "NA",
-            "rate_limiter": {
-                "type": "application",
-                "limiting_share": 1.0,  # Use 100% of rate limit
-                "include_429s": False,  # Don't count 429s against rate limit
-            },
-            "cache": {
-                "type": "lru",
-                "expiration_time": {
-                    "summoner": 3600,  # 1 hour
-                    "match": 86400,  # 24 hours
-                    "match_timeline": 86400,  # 24 hours
+        cass.apply_settings(
+            {
+                "api_key": settings.riot_api_key,
+                "default_region": "NA",
+                "rate_limiter": {
+                    "type": "application",
+                    "limiting_share": 1.0,
+                    "include_429s": False,
                 },
-            },
-        }
+                "cache": {
+                    "type": "lru",
+                    "expiration_time": {"summoner": 3600, "match": 86400, "match_timeline": 86400},
+                },
+            }
+        )
+        try:
+            logging.getLogger("datapipelines.pipelines").setLevel(logging.WARNING)
+            logging.getLogger("cassiopeia").setLevel(logging.WARNING)
+        except Exception:
+            pass
+        self._session: Any | None = None
+        logger.info("Riot API adapter initialized")
 
-        # Apply settings to Cassiopeia
-        cass.apply_settings(cass_settings)
-        logger.info("Riot API adapter initialized with Cassiopeia")
+    async def _ensure_session(self):
+        import aiohttp
+
+        if self._session is None or getattr(self._session, "closed", True):
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+        return self._session
+
+    async def close(self) -> None:
+        try:
+            if self._session and not self._session.closed:
+                await self._session.close()
+        except Exception:
+            pass
+
+    async def get_account_by_riot_id(
+        self, game_name: str, tag_line: str, region: str = "americas"
+    ) -> dict[str, str] | None:
+        from urllib.parse import quote
+
+        encoded_name = quote(game_name)
+        encoded_tag = quote(tag_line)
+        url = f"https://{region}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{encoded_name}/{encoded_tag}"
+        headers = {"X-Riot-Token": settings.riot_api_key}
+        try:
+            session = await self._ensure_session()
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {
+                        "puuid": data.get("puuid", ""),
+                        "game_name": data.get("gameName", game_name),
+                        "tag_line": data.get("tagLine", tag_line),
+                    }
+                if resp.status == 404:
+                    return None
+                if resp.status == 429:
+                    raise RateLimitError(int(resp.headers.get("Retry-After", "60")))
+                logger.error(f"Account API error {resp.status}: {await resp.text()}")
+                return None
+        except RateLimitError:
+            raise
+        except Exception as e:
+            logger.error(f"Account API error for {game_name}#{tag_line}: {e}")
+            return None
 
     async def get_summoner_by_discord_id(self, discord_id: str) -> dict[str, Any] | None:
-        """Get summoner data by Discord ID.
-
-        This requires a prior binding in our database.
-        The actual implementation would query the database first.
-        """
-        # This is a stub - actual implementation would query database
-        # for the PUUID associated with this Discord ID
-        logger.warning(f"get_summoner_by_discord_id not fully implemented for {discord_id}")
+        logger.warning(f"get_summoner_by_discord_id not implemented for {discord_id}")
         return None
 
     async def get_summoner_by_puuid(self, puuid: str, region: str = "NA") -> SummonerDTO | None:
-        """Get summoner data by PUUID.
-
-        Args:
-            puuid: Player Universally Unique Identifier
-            region: Riot region (default: NA)
-
-        Returns:
-            SummonerDTO if found, None otherwise
-        """
         try:
-            # Convert to Cassiopeia region format
             cass_region = self._convert_region(region)
-
-            # Cassiopeia handles rate limiting automatically
             summoner = await asyncio.to_thread(Summoner, puuid=puuid, region=cass_region)
-
-            # Load the summoner data (lazy loading)
             await asyncio.to_thread(summoner.load)
-
-            # Convert to our Pydantic model
             return SummonerDTO(
                 accountId=summoner.account_id,
                 profileIconId=summoner.profile_icon.id,
@@ -111,139 +127,206 @@ class RiotAPIAdapter(RiotAPIPort):
                 summonerLevel=summoner.level,
                 name=summoner.name,
             )
-
         except Exception as e:
-            logger.error(f"Error fetching summoner for PUUID {puuid}: {e}")
+            logger.error(f"Summoner fetch error for puuid {puuid}: {e}")
             return None
 
-    async def get_match_timeline(self, match_id: str, region: str) -> dict[str, Any] | None:
-        """Get detailed match timeline data.
-
-        Cassiopeia automatically handles:
-        - Rate limiting with exponential backoff
-        - 429 errors with Retry-After header respect
-        - Caching to reduce duplicate API calls
-
-        Args:
-            match_id: Match ID to fetch timeline for
-            region: Riot region
-
-        Returns:
-            Timeline data as dictionary if successful, None otherwise
-        """
-        try:
-            cass_region = self._convert_region(region)
-
-            # Get the match first
-            match = await asyncio.to_thread(Match, id=match_id, region=cass_region)
-
-            # Get timeline (Cassiopeia handles rate limiting)
-            timeline = await asyncio.to_thread(match.timeline)
-
-            if timeline is None:
-                logger.warning(f"No timeline data available for match {match_id}")
-                return None
-
-            # Convert to dictionary for our contracts
-            # Note: Cassiopeia objects are complex, we need to extract the data
-            timeline_data = self._extract_timeline_data(timeline)
-
-            return timeline_data
-
-        except cass.datastores.riotapi.common.APIError as e:
-            if e.code == 429:
-                retry_after = getattr(e, "retry_after", None) or 60
-                raise RateLimitError(retry_after) from e
-            elif e.code == 403:
-                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403) from e
-            else:
-                raise RiotAPIError(
-                    f"API error fetching timeline for {match_id}: {e}", status_code=e.code
-                ) from e
-        except Exception as e:
-            raise RiotAPIError(f"Unexpected error fetching timeline for {match_id}: {e}") from e
-
     async def get_match_history(self, puuid: str, region: str, count: int = 20) -> list[str]:
-        """Get recent match IDs for a summoner.
-
-        Args:
-            puuid: Player Universally Unique Identifier
-            region: Riot region
-            count: Number of matches to fetch (default: 20)
-
-        Returns:
-            List of match IDs
-        """
+        route = self._regional_routing(region)
+        url = f"https://{route}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?start=0&count={max(1, min(count, 100))}"
+        headers = {"X-Riot-Token": settings.riot_api_key}
         try:
-            cass_region = self._convert_region(region)
-
-            # Get summoner
-            summoner = await asyncio.to_thread(Summoner, puuid=puuid, region=cass_region)
-
-            # Get match history (Cassiopeia handles pagination)
-            match_history: Any = await asyncio.to_thread(  # MatchHistory (untyped library)
-                summoner.match_history
-            )
-
-            # Extract match IDs
-            match_ids = []
-            async for match in self._async_match_generator(match_history, count):
-                match_ids.append(match.id)
-
-            logger.info(f"Fetched {len(match_ids)} match IDs for {puuid}")
-            return match_ids
-
+            session = await self._ensure_session()
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return [str(m) for m in data] if isinstance(data, list) else []
+                if resp.status == 404:
+                    return []
+                if resp.status == 429:
+                    raise RateLimitError(int(resp.headers.get("Retry-After", "60")))
+                logger.error(f"Match IDs API error {resp.status}: {await resp.text()}")
+                return []
+        except RateLimitError:
+            raise
         except Exception as e:
-            logger.error(f"Error fetching match history for {puuid}: {e}")
+            logger.error(f"Match history error for puuid {puuid}: {e}")
             return []
 
     async def get_match_details(self, match_id: str, region: str) -> dict[str, Any] | None:
-        """Get match details from Match-V5 API.
-
-        Args:
-            match_id: Match ID to fetch
-            region: Riot region
-
-        Returns:
-            Match data as dictionary if successful, None otherwise
-        """
+        route = self._regional_routing(region)
+        url = f"https://{route}.api.riotgames.com/lol/match/v5/matches/{match_id}"
+        headers = {"X-Riot-Token": settings.riot_api_key}
         try:
-            cass_region = self._convert_region(region)
-
-            # Get match (Cassiopeia handles rate limiting)
-            match = await asyncio.to_thread(Match, id=match_id, region=cass_region)
-
-            # Load match data
-            await asyncio.to_thread(match.load)
-
-            # Extract match data
-            match_data = self._extract_match_data(match)
-
-            return match_data
-
-        except cass.datastores.riotapi.common.APIError as e:
-            if e.code == 429:
-                retry_after = getattr(e, "retry_after", None) or 60
-                raise RateLimitError(retry_after) from e
-            elif e.code == 403:
-                raise RiotAPIError("Forbidden: Check API key permissions", status_code=403) from e
-            else:
-                raise RiotAPIError(
-                    f"API error fetching match {match_id}: {e}", status_code=e.code
-                ) from e
+            session = await self._ensure_session()
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data if isinstance(data, dict) else None
+                if resp.status == 404:
+                    return None
+                if resp.status == 429:
+                    raise RateLimitError(int(resp.headers.get("Retry-After", "60")))
+                if resp.status == 403:
+                    raise RiotAPIError("Forbidden: Check API key permissions", status_code=403)
+                logger.error(f"Match details API error {resp.status}: {await resp.text()}")
+                return None
+        except RateLimitError:
+            raise
         except Exception as e:
-            raise RiotAPIError(f"Unexpected error fetching match {match_id}: {e}") from e
+            logger.error(f"Match details error for {match_id}: {e}")
+            return None
+
+    async def get_match_timeline(self, match_id: str, region: str) -> dict[str, Any] | None:
+        route = self._regional_routing(region)
+        url = f"https://{route}.api.riotgames.com/lol/match/v5/matches/{match_id}/timeline"
+        headers = {"X-Riot-Token": settings.riot_api_key}
+        try:
+            session = await self._ensure_session()
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    raw = await resp.json()
+                    if not (isinstance(raw, dict) and "info" in raw and "metadata" in raw):
+                        logger.error("Unexpected timeline payload shape")
+                        return None
+                    # Participants mapping
+                    match_details = await self.get_match_details(match_id, region)
+                    participants_map: list[dict[str, Any]] = []
+                    if match_details and isinstance(match_details.get("info"), dict):
+                        info_md = match_details["info"]
+                        parts = info_md.get("participants", [])
+                        if isinstance(parts, list):
+                            for i, p in enumerate(parts[:10]):
+                                participants_map.append(
+                                    {
+                                        "participant_id": int(p.get("participantId", i + 1)),
+                                        "puuid": str(p.get("puuid", "")),
+                                    }
+                                )
+                    if not participants_map:
+                        meta_parts = raw.get("metadata", {}).get("participants", [])
+                        if isinstance(meta_parts, list) and len(meta_parts) == 10:
+                            participants_map = [
+                                {"participant_id": i + 1, "puuid": str(p)}
+                                for i, p in enumerate(meta_parts)
+                            ]
+
+                    # Convert frames
+                    def _cs_map(d: dict[str, Any]) -> dict[str, Any]:
+                        m = {
+                            "abilityHaste": "ability_haste",
+                            "abilityPower": "ability_power",
+                            "armor": "armor",
+                            "armorPen": "armor_pen",
+                            "armorPenPercent": "armor_pen_percent",
+                            "attackDamage": "attack_damage",
+                            "attackSpeed": "attack_speed",
+                            "bonusArmorPenPercent": "bonus_armor_pen_percent",
+                            "bonusMagicPenPercent": "bonus_magic_pen_percent",
+                            "ccReduction": "cc_reduction",
+                            "cooldownReduction": "cooldown_reduction",
+                            "health": "health",
+                            "healthMax": "health_max",
+                            "healthRegen": "health_regen",
+                            "lifesteal": "lifesteal",
+                            "magicPen": "magic_pen",
+                            "magicPenPercent": "magic_pen_percent",
+                            "magicResist": "magic_resist",
+                            "movementSpeed": "movement_speed",
+                            "omnivamp": "omnivamp",
+                            "physicalVamp": "physical_vamp",
+                            "power": "power",
+                            "powerMax": "power_max",
+                            "powerRegen": "power_regen",
+                            "spellVamp": "spell_vamp",
+                        }
+                        return {m.get(k, k): v for k, v in d.items()}
+
+                    def _ds_map(d: dict[str, Any]) -> dict[str, Any]:
+                        m = {
+                            "magicDamageDone": "magic_damage_done",
+                            "magicDamageDoneToChampions": "magic_damage_done_to_champions",
+                            "magicDamageTaken": "magic_damage_taken",
+                            "physicalDamageDone": "physical_damage_done",
+                            "physicalDamageDoneToChampions": "physical_damage_done_to_champions",
+                            "physicalDamageTaken": "physical_damage_taken",
+                            "totalDamageDone": "total_damage_done",
+                            "totalDamageDoneToChampions": "total_damage_done_to_champions",
+                            "totalDamageTaken": "total_damage_taken",
+                            "trueDamageDone": "true_damage_done",
+                            "trueDamageDoneToChampions": "true_damage_done_to_champions",
+                            "trueDamageTaken": "true_damage_taken",
+                        }
+                        return {m.get(k, k): v for k, v in d.items()}
+
+                    frames: list[dict[str, Any]] = []
+                    for fr in raw.get("info", {}).get("frames", []) or []:
+                        pf_raw = fr.get("participantFrames", {}) or {}
+                        pf_conv: dict[str, Any] = {}
+                        for key, val in pf_raw.items():
+                            if isinstance(val, dict):
+                                pf_conv[str(key)] = {
+                                    "participant_id": int(val.get("participantId", key)),
+                                    "champion_stats": _cs_map(val.get("championStats", {})),
+                                    "damage_stats": _ds_map(val.get("damageStats", {})),
+                                    "current_gold": val.get("currentGold", 0),
+                                    "gold_per_second": val.get("goldPerSecond", 0),
+                                    "jungle_minions_killed": val.get("jungleMinionsKilled", 0),
+                                    "level": val.get("level", 1),
+                                    "minions_killed": val.get("minionsKilled", 0),
+                                    "position": val.get("position", {}),
+                                    "time_enemy_spent_controlled": val.get(
+                                        "timeEnemySpentControlled", 0
+                                    ),
+                                    "total_gold": val.get("totalGold", 0),
+                                    "xp": val.get("xp", 0),
+                                }
+                        frames.append(
+                            {
+                                "timestamp": fr.get("timestamp", 0),
+                                "participant_frames": pf_conv,
+                                "events": fr.get("events", []),
+                            }
+                        )
+
+                    meta = raw.get("metadata", {})
+                    info = raw.get("info", {})
+                    game_id = 0
+                    if match_details and isinstance(match_details.get("info"), dict):
+                        try:
+                            game_id = int(match_details["info"].get("gameId", 0))
+                        except Exception:
+                            game_id = 0
+
+                    return {
+                        "metadata": {
+                            "data_version": meta.get("dataVersion", ""),
+                            "match_id": meta.get("matchId", match_id),
+                            "participants": meta.get("participants", []),
+                        },
+                        "info": {
+                            "frame_interval": info.get("frameInterval", 60000),
+                            "frames": frames,
+                            "game_id": game_id,
+                            "participants": participants_map,
+                        },
+                    }
+                if resp.status == 404:
+                    return None
+                if resp.status == 429:
+                    raise RateLimitError(int(resp.headers.get("Retry-After", "60")))
+                if resp.status == 403:
+                    raise RiotAPIError("Forbidden: Check API key permissions", status_code=403)
+                logger.error(f"Timeline API error {resp.status}: {await resp.text()}")
+                return None
+        except RateLimitError:
+            raise
+        except Exception as e:
+            logger.error(f"Timeline error for {match_id}: {e}")
+            return None
 
     def _convert_region(self, region: str) -> str:
-        """Convert region string to Cassiopeia format.
-
-        Args:
-            region: Region in our format (e.g., "na1", "euw1")
-
-        Returns:
-            Region in Cassiopeia format (e.g., "NA", "EUW")
-        """
-        region_mapping = {
+        mapping = {
             "na1": "NA",
             "euw1": "EUW",
             "eune1": "EUNE",
@@ -251,143 +334,25 @@ class RiotAPIAdapter(RiotAPIPort):
             "br1": "BR",
             "la1": "LAN",
             "la2": "LAS",
-            "oce1": "OCE",
+            "oc1": "OCE",
             "ru": "RU",
             "tr1": "TR",
             "jp1": "JP",
         }
-        return region_mapping.get(region.lower(), "NA")
+        return mapping.get(region.lower(), "NA")
 
-    def _extract_timeline_data(self, timeline: Any) -> dict[str, Any]:  # Timeline (untyped library)
-        """Extract timeline data from Cassiopeia Timeline object.
-
-        Args:
-            timeline: Cassiopeia Timeline object
-
-        Returns:
-            Dictionary with timeline data
-        """
-        # This is a simplified extraction - full implementation would
-        # convert all Timeline properties to match our MatchTimelineDTO
-        timeline_data = {
-            "metadata": {
-                "dataVersion": "2",
-                "matchId": timeline.match.id,
-                "participants": [p.puuid for p in timeline.match.participants],
-            },
-            "info": {
-                "frameInterval": timeline.frame_interval,
-                "frames": [],
-                "gameId": timeline.match.id,
-                "participants": [],
-            },
-        }
-
-        # Extract frames
-        for frame in timeline.frames:
-            frame_data = {
-                "timestamp": frame.timestamp,
-                "events": [],
-                "participantFrames": {},
-            }
-
-            # Extract events
-            for event in frame.events:
-                event_data = {
-                    "timestamp": event.timestamp,
-                    "type": event.type,
-                }
-                # Add more event fields based on event type
-                if hasattr(event, "participant_id"):
-                    event_data["participantId"] = event.participant_id
-                if hasattr(event, "position"):
-                    event_data["position"] = {
-                        "x": event.position.x,
-                        "y": event.position.y,
-                    }
-
-                frame_data["events"].append(event_data)
-
-            timeline_data["info"]["frames"].append(frame_data)
-
-        return timeline_data
-
-    def _extract_match_data(self, match: Any) -> dict[str, Any]:  # Match (untyped library)
-        """Extract match data from Cassiopeia Match object.
-
-        Args:
-            match: Cassiopeia Match object
-
-        Returns:
-            Dictionary with match data
-        """
-        # Extract basic match info
-        match_data = {
-            "metadata": {
-                "dataVersion": "2",
-                "matchId": match.id,
-                "participants": [p.summoner.puuid for p in match.participants],
-            },
-            "info": {
-                "gameId": match.id,
-                "gameCreation": int(match.creation.timestamp() * 1000),
-                "gameDuration": match.duration.seconds,
-                "gameStartTimestamp": int(match.start.timestamp() * 1000),
-                "gameEndTimestamp": int((match.start.timestamp() + match.duration.seconds) * 1000),
-                "gameMode": match.mode.value,
-                "gameName": match.name if hasattr(match, "name") else "",
-                "gameType": match.type.value,
-                "gameVersion": match.version,
-                "mapId": match.map.id,
-                "platformId": match.platform.value,
-                "queueId": match.queue.id if match.queue else 0,
-                "participants": [],
-                "teams": [],
-            },
-        }
-
-        # Extract participant data
-        for participant in match.participants:
-            participant_data = {
-                "puuid": participant.summoner.puuid,
-                "summonerId": participant.summoner.id,
-                "summonerName": participant.summoner.name,
-                "teamId": participant.team.side.value,
-                "participantId": participant.id,
-                "championId": participant.champion.id,
-                "championName": participant.champion.name,
-                "kills": participant.stats.kills,
-                "deaths": participant.stats.deaths,
-                "assists": participant.stats.assists,
-                "goldEarned": participant.stats.gold_earned,
-                "totalDamageDealt": participant.stats.total_damage_dealt,
-                "visionScore": participant.stats.vision_score,
-                "win": participant.stats.win,
-                # Add more fields as needed
-            }
-            match_data["info"]["participants"].append(participant_data)
-
-        return match_data
-
-    async def _async_match_generator(
-        self,
-        match_history: Any,
-        limit: int,  # Cassiopeia MatchHistory (untyped)
-    ) -> AsyncIterator[Any]:  # Cassiopeia Match (untyped)
-        """Async generator for match history.
-
-        Args:
-            match_history: Cassiopeia MatchHistory object
-            limit: Maximum number of matches to yield
-
-        Yields:
-            Match objects
-        """
-        count = 0
-        for match in match_history:
-            if count >= limit:
-                break
-            yield match
-            count += 1
-            # Small delay to be nice to the API
-            await asyncio.sleep(0.1)
+    def _regional_routing(self, platform_region: str) -> str:
+        pr = platform_region.upper()
+        americas = {"NA1", "BR1", "LA1", "LA2", "OC1"}
+        europe = {"EUW1", "EUN1", "RU", "TR1"}
+        asia = {"KR", "JP1"}
+        sea = {"PH2", "SG2", "TH2", "TW2", "VN2"}
+        if pr in americas:
+            return "americas"
+        if pr in europe:
+            return "europe"
+        if pr in asia:
+            return "asia"
+        if pr in sea:
+            return "sea"
+        return "americas"

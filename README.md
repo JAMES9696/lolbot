@@ -175,6 +175,18 @@ All models enforce:
 - Add community features data structures
 - Implement caching strategies
 
+### P5 Phase (Voice & AI Solidification)
+- TTS voice synthesis adapter with timeouts and graceful degradation
+- Webhook UX enhanced with optional "点击收听 AI 语音" link
+- Emotion mapping finalized (score → emotion) for voice modulation
+- System prompts versioned and configurable (see `src/prompts/system_prompts.py`)
+- Deployment and setup: `docs/volcengine_tts_setup.md`
+
+Compliance Note (Riot):
+- Do not imply Riot endorsement; avoid competitive advantage claims
+- Respect Discord 2000-char limit; no toxic or disallowed content
+- If TTS is commercial/VIP, obtain Riot’s prior written approval
+
 ## 🛠️ Development Tools
 
 - **Python 3.12+** - Required for modern type hints

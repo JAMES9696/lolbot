@@ -1,11 +1,16 @@
-"""Configuration settings using Pydantic Settings.
+"""
+Configuration settings using Pydantic Settings.
 
 All sensitive configuration must be loaded from environment variables.
 Never hardcode API keys or credentials in the code.
 """
 
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+    PydanticBaseSettingsSource,
+)
 
 
 class Settings(BaseSettings):
@@ -17,6 +22,25 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    # Ensure .env values take precedence over system environment variables.
+    # This prevents accidental overrides from CI/host environments.
+    # Order: init kwargs > .env (dotenv) > env vars > file secrets
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ):
+        return (
+            init_settings,
+            dotenv_settings,
+            env_settings,
+            file_secret_settings,
+        )
 
     # Riot API Configuration
     riot_api_key: str = Field(..., validation_alias=AliasChoices("RIOT_API_KEY"))
@@ -46,20 +70,66 @@ class Settings(BaseSettings):
     redis_url: str = Field("redis://localhost:6379", alias="REDIS_URL")
     redis_cache_ttl: int = Field(3600, alias="REDIS_CACHE_TTL")
     redis_match_cache_ttl: int = Field(86400, alias="REDIS_MATCH_CACHE_TTL")
+    llm_cache_enabled: bool = Field(True, alias="LLM_CACHE_ENABLED")
+    analysis_cache_enabled: bool = Field(True, alias="ANALYSIS_CACHE_ENABLED")
 
     # Google Gemini Configuration
     gemini_api_key: str | None = Field(None, alias="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-pro", alias="GEMINI_MODEL")
     gemini_temperature: float = Field(0.7, alias="GEMINI_TEMPERATURE")
     gemini_max_output_tokens: int = Field(2048, alias="GEMINI_MAX_OUTPUT_TOKENS")
+    gemini_json_mode_enabled: bool = Field(False, alias="GEMINI_JSON_MODE_ENABLED")
+
+    # OpenAI-compatible (OhMyGPT) Configuration
+    # When configured (or when LLM_PROVIDER=openai), the system will use the
+    # OpenAI-compatible Chat Completions API at OPENAI_API_BASE for LLM calls.
+    openai_api_key: str | None = Field(None, alias="OPENAI_API_KEY")
+    openai_api_base: str | None = Field(None, alias="OPENAI_API_BASE")
+    openai_model: str | None = Field(None, alias="OPENAI_MODEL")
+    openai_temperature: float = Field(0.7, alias="OPENAI_TEMPERATURE")
+    openai_max_tokens: int = Field(2048, alias="OPENAI_MAX_TOKENS")
+
+    # LLM Provider selection (gemini | openai)
+    llm_provider: str = Field("gemini", alias="LLM_PROVIDER")
+
+    # FinOps pricing (USD per 1K tokens)
+    finops_prompt_token_price_usd: float = Field(0.0005, alias="FINOPS_PROMPT_TOKEN_PRICE_USD")
+    finops_completion_token_price_usd: float = Field(
+        0.0015, alias="FINOPS_COMPLETION_TOKEN_PRICE_USD"
+    )
+    finops_monthly_budget_usd: float = Field(100.0, alias="FINOPS_MONTHLY_BUDGET_USD")
+
+    # Chaos Engineering toggles
+    chaos_redis_down: bool = Field(False, alias="CHAOS_REDIS_DOWN")
+    chaos_llm_latency_ms: int = Field(0, alias="CHAOS_LLM_LATENCY_MS")
+    chaos_llm_error_rate: float = Field(0.0, alias="CHAOS_LLM_ERROR_RATE")
 
     # TTS Configuration (Doubao)
     tts_api_key: str | None = Field(None, alias="TTS_API_KEY")
     tts_api_url: str | None = Field(None, alias="TTS_API_URL")
     tts_voice_id: str = Field("default", alias="TTS_VOICE_ID")
+    tts_timeout_seconds: int = Field(15, alias="TTS_TIMEOUT_SECONDS")
+    tts_upload_timeout_seconds: int = Field(10, alias="TTS_UPLOAD_TIMEOUT_SECONDS")
+
+    # Voice Playback Default Parameters
+    voice_volume_default: float = Field(0.5, alias="VOICE_VOLUME_DEFAULT")
+    voice_normalize_default: bool = Field(False, alias="VOICE_NORMALIZE_DEFAULT")
+    voice_max_seconds_default: int | None = Field(90, alias="VOICE_MAX_SECONDS_DEFAULT")
+
+    # Audio Storage Configuration (Local file serving)
+    audio_storage_path: str = Field("static/audio", alias="AUDIO_STORAGE_PATH")
+    audio_base_url: str = Field("http://localhost:3000/static/audio", alias="AUDIO_BASE_URL")
+
+    # S3/CDN Configuration (for TTS audio delivery)
+    aws_access_key_id: str | None = Field(None, alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: str | None = Field(None, alias="AWS_SECRET_ACCESS_KEY")
+    aws_s3_bucket: str | None = Field(None, alias="AWS_S3_BUCKET")
+    aws_s3_region: str = Field("us-east-1", alias="AWS_S3_REGION")
+    cdn_base_url: str | None = Field(None, alias="CDN_BASE_URL")
+    audio_file_ttl_seconds: int = Field(604800, alias="AUDIO_FILE_TTL_SECONDS")  # 7 days
 
     # Application Configuration
-    app_name: str = Field("Project Chimera", alias="APP_NAME")
+    app_name: str = Field("蔚-上城人", alias="APP_NAME")
     app_version: str = Field("0.1.0", alias="APP_VERSION")
     app_env: str = Field("development", alias="APP_ENV")
     app_debug: bool = Field(False, alias="APP_DEBUG")
@@ -77,8 +147,33 @@ class Settings(BaseSettings):
 
     # Feature Flags
     feature_voice_enabled: bool = Field(False, alias="FEATURE_VOICE_ENABLED")
+    feature_voice_streaming_enabled: bool = Field(False, alias="FEATURE_VOICE_STREAMING")
     feature_ai_analysis_enabled: bool = Field(True, alias="FEATURE_AI_ANALYSIS_ENABLED")
     feature_leaderboard_enabled: bool = Field(True, alias="FEATURE_LEADERBOARD_ENABLED")
+    # V2 experiments and feedback UI
+    feature_team_analysis_enabled: bool = Field(False, alias="FEATURE_TEAM_ANALYSIS_ENABLED")
+    feature_feedback_enabled: bool = Field(True, alias="FEATURE_FEEDBACK_ENABLED")
+    # Team auto TTS playback (post-webhook, no button)
+    feature_team_auto_tts_enabled: bool = Field(False, alias="FEATURE_TEAM_AUTO_TTS_ENABLED")
+    # UI ASCII-SAFE rendering (avoid emojis/ANSI in code blocks and labels)
+    ui_ascii_safe: bool = Field(
+        False,
+        validation_alias=AliasChoices("UI_ASCII_SAFE", "CHIMERA_ASCII_SAFE"),
+    )
+
+    # V2.1 Instructional Analysis (Timeline Evidence)
+    feature_v21_prescriptive_enabled: bool = Field(
+        default=False,
+        alias="FEATURE_V21_PRESCRIPTIVE_ENABLED",
+        description="Enable V2.1 Timeline evidence extraction for fact-based improvement suggestions",
+    )
+
+    # V2.2 Personalization (User Profile-based Analysis Customization)
+    feature_v22_personalization_enabled: bool = Field(
+        default=False,
+        alias="FEATURE_V22_PERSONALIZATION_ENABLED",
+        description="Enable V2.2 user profile loading and personalized analysis tone/suggestions",
+    )
 
     # Security Configuration
     security_rso_client_id: str | None = Field(None, alias="SECURITY_RSO_CLIENT_ID")
@@ -86,6 +181,22 @@ class Settings(BaseSettings):
     security_rso_redirect_uri: str = Field(
         "http://localhost:3000/callback", alias="SECURITY_RSO_REDIRECT_URI"
     )
+
+    # Mock RSO for development testing (bypasses Production API Key requirement)
+    mock_rso_enabled: bool = Field(False, alias="MOCK_RSO_ENABLED")
+
+    # Frontend -> Backend feedback collection endpoint (optional)
+    # Example: https://cli2.example.com/api/v1/feedback
+    feedback_api_url: str | None = Field(None, alias="FEEDBACK_API_URL")
+
+    # Broadcast webhook authentication for post-game voice announcements
+    broadcast_webhook_secret: str | None = Field(None, alias="BROADCAST_WEBHOOK_SECRET")
+    # Callback/broadcast server base URL for voice jobs (bot process HTTP server)
+    # Default aligns with RSOCallbackServer.start(..., port=3000) to avoid port mismatch.
+    broadcast_server_url: str = Field("http://localhost:3000", alias="BROADCAST_SERVER_URL")
+    # Alerting → Discord bridge
+    alerts_discord_webhook: str | None = Field(None, alias="ALERTS_DISCORD_WEBHOOK")
+    alert_webhook_secret: str | None = Field(None, alias="ALERT_WEBHOOK_SECRET")
 
     @property
     def is_production(self) -> bool:
@@ -97,11 +208,22 @@ class Settings(BaseSettings):
         """Check if running in development environment."""
         return self.app_env == "development"
 
+    # Backwards-compatible property so existing code using settings.tts_enabled works
+    @property
+    def tts_enabled(self) -> bool:
+        """Feature toggle for TTS synthesis (maps to FEATURE_VOICE_ENABLED).
+
+        Returns:
+            True if voice features are enabled via feature flag.
+        """
+        return bool(self.feature_voice_enabled)
+
 
 # Global settings instance - will be loaded from environment
 # This will raise an error if required env vars are not set
 # In development, create a .env file with required settings
-settings = Settings()
+# MyPy doesn't understand Pydantic Settings env loading
+settings = Settings()  # type: ignore[call-arg]
 
 
 def get_settings() -> Settings:

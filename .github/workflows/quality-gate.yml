@@ -1,0 +1,50 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: "ci"
+      APP_DEBUG: "false"
+      FEATURE_AI_ANALYSIS_ENABLED: "true"
+      MOCK_RSO_ENABLED: "true"
+      RIOT_API_KEY: "ci-dummy"
+      GEMINI_API_KEY: "ci-dummy"
+      DISCORD_BOT_TOKEN: "ci-dummy"
+      REDIS_URL: "redis://localhost:6379/0"
+      DATABASE_URL: "postgresql://localhost/lolbot"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install poetry
+          poetry install --no-interaction --no-ansi
+
+      - name: Ruff Lint
+        run: |
+          poetry run ruff check --output-format=concise
+
+      - name: MyPy Strict (src only)
+        run: |
+          poetry run mypy --strict src
+
+      - name: Tests with Coverage Gate
+        run: |
+          # Run unit + fast tests; skip heavy e2e/integration here
+          poetry run pytest -q -k "not e2e and not integration" \
+            --cov=src --cov-report=term-missing --cov-fail-under=65

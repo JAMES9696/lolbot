@@ -53,7 +53,15 @@ Thumbs.db
 
 # Logs
 *.log
-logs/
+logs/*.log
+logs/**/*.log
+
+# Media files
+*.mp3
+
+# Runtime files
+runtime/
+*.pid
 
 # Testing
 .coverage

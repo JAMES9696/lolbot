@@ -25,7 +25,9 @@ class CommandName(str, Enum):
     BIND = "bind"
     UNBIND = "unbind"
     PROFILE = "profile"
-    ANALYZE = "analyze"  # Future: /讲道理 command
+    ANALYZE = "analyze"  # V1: Single-player analysis (/讲道理)
+    TEAM_ANALYZE = "team-analyze"  # V2: Team-relative analysis (5-player comparison)
+    SETTINGS = "settings"  # V2.2: User preference configuration
     TRASH_TALK = "trash_talk"  # Future: /垃圾话模式 command
 
 

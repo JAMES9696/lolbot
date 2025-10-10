@@ -1,0 +1,219 @@
+graph TD
+    subgraph 基础设施与配置 (INFRA)
+        A[Poetry/环境配置] --> B(Pydantic Settings/.env);
+        A --> C(CI/CD: Ruff/MyPy/Pre-commit);
+        A --> D(数据库: PostgreSQL/Redis);
+    end
+
+    subgraph 架构与契约 (Architecture)
+        E(六边形架构骨架: Core/Adapters/Contracts)
+        F(Pydantic数据模型: SummonerProfile, MatchResult)
+        G(可观测性: llm_debug_wrapper)
+    end
+
+    subgraph 外部适配器 (Adapters)
+        H(Discord Adapter: discord.py框架)
+        I(Riot API Adapter: Cassiopeia/Riot-Watcher)
+        J(数据库 Adapter: SQLAlchemy/asyncpg)
+        K(AI/LLM Adapter: Gemini API)
+        L(TTS Adapter: 豆包TTS API)
+    end
+
+    subgraph 核心功能 (Features)
+        M(用户绑定: /bind)
+        N(异步任务队列: Celery/RQ)
+        O(比赛数据获取与存储)
+        P(评分算法 V1)
+        Q(权限系统: RBAC)
+        R{核心功能: /讲道理}
+        S(社区功能: /排行榜, /通缉榜)
+        T(语音播报功能)
+    end
+
+    %% 依赖关系连接
+    B --> I; %% API Key for Riot
+    D --> J; %% DB connection for Adapter
+    E --> H & I & J & K & L; %% Adapters depend on Architecture
+    F --> I & O & P; %% Models needed for API calls and Processing
+    G --> P & R & O; %% Observability needed for core functions
+
+    H --> M & T; %% Discord needed for Bind and Voice
+    I --> O; %% Riot API needed for Match Data
+    J --> M & O & S; %% DB needed for Bind, Storage, Leaderboards
+
+    N --> O & R & T; %% Async queue needed for heavy tasks
+
+    O --> P; %% Data needed for Scoring
+    P --> S & R; %% Scoring needed for Leaderboard and Reasoning
+
+    K --> R; %% LLM needed for Reasoning
+    L --> T; %% TTS needed for Voice
+
+    Q --> M & S & T & R; %% Permissions needed for features
+
+gantt
+    title 英雄联盟 Discord 机器人开发冲刺 (Hexagonal & Parallel)
+    dateFormat  YYYY-MM-DD
+    axisFormat  Week %W
+    %% 起始日期: 2025-10-06
+    tickInterval 1week
+
+    section 基础设施与架构 (INFRA & ARCH)
+    项目初始化, CI/CD, 六边形结构 :active, infra1, 2025-10-06, 2w
+    异步队列与数据库设计          :arch1, 2025-10-20, 1w
+    权限系统 (RBAC)               :arch2, 2025-11-03, 2w
+    AI/TTS/Voice Adapters         :arch3, 2025-11-17, 2w
+    国际化 (i18n) & 部署准备      :infra2, 2025-12-08, 2w
+
+    section 数据与 API (DATA & API)
+    Riot API Adapter & Contracts  :active, data1, 2025-10-13, 1w
+    Match-V5 Timeline 抓取与存储  :data2, 2025-10-20, 2w
+    分布式速率限制与缓存优化      :data3, 2025-11-03, 2w
+    多区域 API 路由               :data4, 2025-12-01, 1w
+
+    section 核心功能与 AI (CORE & AI)
+    用户绑定 (/bind) 逻辑         :active, core1, 2025-10-13, 1w
+    实时监控与播报逻辑            :core2, 2025-10-27, 2w
+    评分算法 V1 设计与实现        :crit, ai1, 2025-11-03, 2w
+    社区功能 (/排行榜, /通缉榜)   :core3, 2025-11-10, 1w
+    核心功能: /讲道理             :crit, ai2, 2025-11-17, 2w
+    赞助与自定义语音功能          :core4, 2025-11-24, 1w
+
+您提供的依赖关系图（DAG）清晰地展示了 Project Chimera 项目中基础设施、架构、适配器和核心功能之间的依赖关系，这对于确保并行开发（Vibe Coding）的顺利进行至关重要。
+
+以下是根据此图和项目严格约束，为 P1 阶段（启动与连接）及后续阶段所需的关键组件，列出的详细开发前准备清单和技术细节：
+
+---
+
+## Project Chimera (AI 赋能的 LoL Discord 机器人) 开发前准备清单
+
+### I. 监管、密钥与合规性 (INFRA/Adapters 启动前提: B, I, M)
+
+项目面向公共并计划商业化（赞助用户），因此 Riot Games 的合规性和 API 密钥获取是最高优先级。
+
+1.  **Riot API 密钥与配额管理 (B -> I)**
+    *   **密钥类型**：必须立即注册产品提案并申请 **生产 API 密钥 (Production Key)**。开发密钥（每 10 秒 10 次请求）的速率限制极低，不足以支持公共机器人的高并发 Match-V5 Timeline 数据获取。
+    *   **速率配额**：生产密钥的起始速率限制要高得多（例如，**每 10 秒 500 次请求**，按区域执行），您的系统必须基于此进行设计和限速管理。
+    *   **密钥安全**：密钥**必须通过 Pydantic Settings 从环境变量加载**，**禁止硬编码**。不得将 API 密钥包含在代码中，尤其是在分发二进制文件时。
+
+2.  **商业化与游戏诚信合规 (Q, R, T)**
+    *   **付费内容**：如果计划通过 VIP 内容（如赞助用户自定义音频）**收费**，**必须事先通知 Riot 并获得书面批准**。收费内容必须是**变革性的 (Transformative)**，并且**必须提供免费的访问层级**。
+    *   **竞争优势**：产品**不得提供游戏中未显示的、给玩家带来竞争优势的信息**（例如，自动追踪敌方终极技能冷却时间）。
+
+3.  **用户绑定与认证 (M: /bind)**
+    *   **RSO 流程**：`/bind` 核心逻辑需要实现 Riot 的 **Riot Sign On (RSO)/OAuth 流程**，这是将 Discord ID 安全地绑定到 Riot **PUUID** 的标准方法。
+    *   **生产密钥依赖**：**RSO 集成仅对拥有生产级 API 密钥的开发者开放**。
+
+### II. 基础设施与架构契约 (INFRA & Architecture: A, C, D, E, F, G)
+
+确保项目在代码结构、类型安全和可观测性方面严格符合约束。
+
+1.  **环境配置与类型安全 (A, C, F)**
+    *   **类型检查**：配置 **Poetry**，强制执行 **Ruff** 和 **MyPy** 严格检查，并将其集成到 **pre-commit hooks** 中。
+    *   **Pydantic 模型**：在 `src/contracts/` 中使用 **Pydantic V2** 定义所有数据模型（F），包括 Riot API 响应（如 `MatchTimeline`）的模型，并遵守 **`Type | None`** 的类型注解要求。
+    *   **六边形架构 (E)**：确保 `src/core/`（领域逻辑，如 P 评分算法和 Q 权限系统）**禁止直接调用**外部适配器（H, I, J, K, L）。
+
+2.  **异步与数据持久化 (D, J, N)**
+    *   **异步库**：除了 `discord.py`，准备使用 **`aiohttp`** 进行通用异步网络请求，并为 PostgreSQL 准备异步库，例如 **`asyncpg`**。
+    *   **数据存储**：配置 **PostgreSQL** 实例（用于持久化数据，包括 JSONB 存储 P2 优化）和 **Redis** 实例（用于缓存和任务队列 **Celery/RQ** 的消息代理/Broker）。
+
+3.  **可观测性 (G, O, P, R)**
+    *   **`llm_debug_wrapper`**：**必须**在 P1 阶段实现并应用此装饰器（G）到所有核心函数和 Adapter 调用（I, K, L），以追踪性能和错误，并保证**结构化日志输出**，为 CLI 3（观察者）提供数据源。
+
+### III. 关键外部适配器与高并发应对 (Adapters: H, I, N)
+
+Adapter 层的设计决定了机器人能否在高流量下稳定运行并处理延迟。
+
+1.  **Riot API 客户端选型 (I)**
+    *   **推荐选择**：**Cassiopeia**。它被描述为**“全包容”的 Python 框架**，提供**“完美”的速率限制处理**和内置缓存功能，有助于减轻 Riot API 的调用压力。
+    *   **限速策略**：Adapter 必须能够捕获 **429 (Rate Limit Exceeded)** 错误，并严格**遵守响应头中的 `Retry-After` 值**进行等待和重试，以避免被禁用访问权限。
+
+2.  **Discord 交互与延迟处理 (H, N, R)**
+    *   **异步任务流转 (N)**：深度分析指令 `/讲道理` (R) 必须被卸载到 **异步任务队列 (Celery/RQ)**。CLI 1 (Frontend) 需要将 **交互令牌** 和必要参数通过 **Redis** 安全地传递给 CLI 2 (Backend Worker)。
+    *   **延迟回复机制 (R)**：为应对耗时的 AI/分析任务，Discord Adapter 必须在收到交互事件的 **3 秒内** 发送 **延迟回复** (`DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE`，值 5)，以向用户显示“正在加载”状态，防止交互令牌失效。
+    *   **错误处理**：Discord API 速率限制处理需要遵守 `Retry-After` 值，并避免产生过多无效请求（401, 403, 429），以避免触发 **Cloudflare Ban**（每 10 分钟 10,000 次无效请求）。
+
+### IV. 核心功能与数据源准备 (Features: O, P, K, L, R)
+
+核心功能依赖于高质量的数据和 LLM 的有效提示。
+
+1.  **数据核心与辅助数据 (O, P)**
+    *   **Match-V5 Timeline**：Match-V5 Timeline API 是实现赛后评分体系 (P) 和深度分析 (R) 的**数据核心**。CLI 4（实验室）应使用 **IPython/Jupyter Notebook** 探索其原始 JSON 结构，以指导 Pydantic 契约的定义和评分算法的设计。
+    *   **静态数据**：集成 **Data Dragon** API 来获取英雄、物品、符文的静态数据和图片资源，以支持 P3 的评分展示和 P5 的国际化 (`zh_CN` 等多语言)。
+    *   **非官方数据**：可探索集成 **`opgg.py`** 等**非官方 Python 库**来获取 OPGG 上的英雄出装、符文和排名等补充信息，但需注意潜在的**爬虫风险**和第三方网站的使用条款.
+
+2.  **AI/LLM 角色设定与交付 (K, L, R)**
+    *   **Prompt Engineering (R)**：在 CLI 4（实验室）中，准备迭代 **系统提示 (System Prompt)**，以定义 LLM (Gemini) 的个性和规则，确保 `/讲道理` (AI数据裁判) 和 `/垃圾话模式` 的情感化、个性化输出质量。
+    *   **情感化交互 (L, T)**：LLM 的输出结构必须能够包含**情绪标签**，以便 **TTS 适配器（豆包）** 能够根据这些标签调整语调和语速，实现情感化语音播报（T）。
+
+3.  **质量控制与测试 (P, O)**
+    *   **TDD**：所有核心组件，特别是领域逻辑（P 评分算法）和 Adapter (I, H, J)，都应采用 **TDD** 原则。配置 **`pytest-asyncio`** 进行异步代码测试。
+    *   **Mocking**：在 P2 阶段之前，准备 Mock Riot API 响应，以便在不消耗生产配额的情况下，进行 Match-V5 Timeline 数据处理逻辑的测试。
+
+**总结启动依赖：** 在 2025 年 10 月 6 日开始 P1 阶段前，必须完成 **生产 API 密钥的申请**、**Docker/Poetry/CI/CD 基础环境的初始化**，以及 **Pydantic 核心数据模型**（包括 Riot API 响应结构）的定义。
+
+您提供的甘特图将项目分解得井然有序，完美地体现了“Vibe Coding”和并行工程的开发哲学。在 2025 年 10 月 6 日冲刺开始之前，必须优先完成基础设施和合规性的准备工作，以确保后续阶段（尤其是数据获取和 AI 赋能）能够顺利进行。
+
+以下是根据您的开发计划表和项目架构约束，列出的详细开发前准备清单：
+
+---
+
+## Project Chimera 关键开发前准备细节清单
+
+### I. 启动阶段前置任务 (P1 启动前提)
+
+在项目初始化 (`infra1`)、API 契约定义 (`data1`) 和用户绑定 (`core1`) 开始前，必须完成合规性和认证的准备工作。
+
+#### 1. Riot API 合规性与密钥申请
+
+| 准备项 | 细节和依据 | 关联任务/阶段 |
+| :--- | :--- | :--- |
+| **获取生产 API 密钥** | 必须立即注册产品提案并申请 **生产 API 密钥 (Production Key)**。这是支持公共机器人的基本要求，其起始速率限制远高于开发密钥（例如，**每 10 秒 500 次请求**）。 | `data1` (Riot Adapter), `core1` (/bind) |
+| **API 密钥安全** | 密钥**必须通过 Pydantic Settings 从环境变量加载**，**禁止硬编码**在代码中或分发二进制文件。 | `infra1` (Pydantic Settings) |
+| **Riot 政策审查** | 强制阅读并理解 Riot Games 的 **API 条款** 和 **主要使用条款**。需持续监控 Riot Developer Site 的政策变更。 | 所有阶段 |
+| **商业化合规** | 如果计划对赞助用户提供收费内容（如自定义语音 `core4`），必须**事先通知 Riot 并获得书面批准**，确保内容具有**变革性 (Transformative)**，并提供**免费访问层级**。 | `core4` (P4) |
+| **游戏诚信合规** | 必须确保产品**不提供游戏中未显示的信息**，从而给玩家带来**竞争优势**（例如，自动追踪敌方终极技能冷却时间）。 | `ai1` (评分算法), `core2` (实时监控) |
+
+#### 2. 六边形架构与类型安全 (P1: infra1, data1)
+
+| 准备项 | 细节和依据 | 关联任务/阶段 |
+| :--- | :--- | :--- |
+| **架构骨架** | 搭建六边形架构骨架 (`src/core/`, `src/adapters/`, `src/contracts/`)，并确保 **Core 层严禁直接调用外部 API** 或数据库。 | `infra1` (六边形结构) |
+| **Pydantic 契约定义** | 在 `src/contracts/` 中使用 **Pydantic V2** 定义所有数据模型。特别是 Riot Match-V5 Timeline API 响应对应的 **Pydantic V2 模型** (`MatchTimeline`)。 | `data1` (Contracts), `data2` (Timeline 抓取) |
+| **类型安全配置** | 配置 **MyPy** 进行严格类型检查，并遵守使用 **`Type | None`** 而非 `Optional` 的约束。 | `infra1`, `质量与测试` |
+| **异步库准备** | 确保 Python 环境支持 `asyncio`。准备用于 PostgreSQL 的异步库 **`asyncpg`**，以及用于通用网络请求的 **`aiohttp`**。 | `infra1` (数据库), `arch1` (异步队列) |
+
+---
+
+### II. 适配器选型与数据流准备 (P1/P2 依赖)
+
+#### 1. Riot API Adapter (data1, data2)
+
+| 准备项 | 细节和依据 | 关联任务/阶段 |
+| :--- | :--- | :--- |
+| **Riot API 客户端选择** | **优先选择 Cassiopeia**，因为它是一个**“全包容”的 Python 框架**，提供**“完美”的速率限制处理**和**内置缓存功能**。应谨慎对待 `Riot-Watcher`，因其默认的速率限制器存在并发竞态条件，且**不会自动重试 429 错误**。 | `data1`, `data3` (速率限制优化) |
+| **429 错误处理策略** | 在 Adapter 中实现强制要求，即接收到 **429 (Rate Limit Exceeded)** 错误时，必须读取并**遵守响应头中的 `Retry-After` 值**进行等待和重试。 | `data1`, `data3` |
+| **Data Dragon 集成** | 准备 Data Dragon API 的集成，用于获取英雄、物品、符文的**静态数据和图片资源**。这将为 P3 的评分可视化和 P5 的国际化 (`zh_CN` 等多语言) 提供支持。 | `P1/P3` (辅助数据) |
+| **非官方数据源探索** | 考虑使用 **`opgg.py`** 等非官方 Python 库，用于获取 OPGG 上的英雄出装、符文和排名等辅助信息，以增强 `/讲道理` 分析的维度（注意：此行为涉及潜在的**爬虫风险**）。 | `ai1`, `core3` |
+
+#### 2. Discord 与任务流转 (core1, core2, arch1)
+
+| 准备项 | 细节和依据 | 关联任务/阶段 |
+| :--- | :--- | :--- |
+| **用户绑定 (RSO)** | 实现 `/bind` 逻辑，引导用户完成 Riot 的 **Riot Sign On (RSO)/OAuth 流程**，通过授权码换取访问令牌，并获取其 **PUUID**。RSO 需要生产密钥才能启用。 | `core1` |
+| **异步任务队列设置** | 搭建 **Celery 或 RQ Worker 进程** (`arch1`)，使用 **Redis** 作为消息代理 (Broker)，用于卸载 Match-V5 Timeline 数据抓取 (`data2`) 和 AI 推理 (`ai2`) 等耗时任务。 | `arch1`, `data2` |
+| **Discord 交互机制** | 确保 Discord Adapter (H) 支持 **斜杠命令 (Slash Commands)**。这是 Discord 的最佳实践，用于改善用户体验。 | `infra1`, `core1` |
+
+---
+
+### III. 核心功能与 AI 准备 (P3/P4 依赖)
+
+P3 和 P4 是项目的核心，需要提前规划 LLM 角色、数据结构和应对高延迟的策略。
+
+| 准备项 | 细节和依据 | 关联任务/阶段 |
+| :--- | :--- | :--- |
+| **LLM 系统提示设计** | 在 CLI 4（实验室）中，开始设计和迭代 LLM（Gemini）的**系统提示 (System Prompt)**。这定义了 **“/讲道理”（AI 数据裁判）** 的个性和规则。 | `ai1` (评分算法), `ai2` (/讲道理) |
+| **情感标签输出** | 规划 LLM/TTS Adapter (`arch3`)，确保 LLM 输出的文本分析结果能够包含**情绪标签**，以指导 TTS 服务（豆包）进行情感化语音播报。 | `arch3`, `core4` |
+| **延迟回复实现** | 为 `/讲道理` (`ai2`) 准备 **延迟回复 (Defer Reply, 值 5)** 机制。机器人必须在 **3 秒内** 发送此初始响应，以避免交互令牌失效。 | `ai2` |
+| **可观测性集成** | **强制要求** 在所有核心函数和 Adapter 调用（包括 Riot API 调用）中实现并应用 **`llm_debug_wrapper` 装饰器**，以追踪性能和错误，并保证结构化日志输出。 | `infra1`, `质量与测试` |
+| **TDD/Mocking 准备** | 配置 **`pytest-asyncio`**。准备 Riot API Match-V5 Timeline 的 **Mock 响应数据**，用于在 P2/P3 阶段无需消耗实际配额即可进行异步任务和评分算法的测试。 | `质量与测试` |

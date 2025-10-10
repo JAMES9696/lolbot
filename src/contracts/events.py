@@ -116,7 +116,7 @@ class SkillLevelUpEvent(BaseEvent):
     """Skill level up event."""
 
     type: Literal[EventType.SKILL_LEVEL_UP]
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     skill_slot: int = Field(..., ge=1, le=4, description="Skill slot (1=Q, 2=W, 3=E, 4=R)")
     level_up_type: str = Field(..., description="NORMAL or EVOLVE")
 
@@ -124,7 +124,7 @@ class SkillLevelUpEvent(BaseEvent):
 class ItemEvent(BaseEvent):
     """Base class for item-related events."""
 
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     item_id: int = Field(..., description="Item ID from Data Dragon")
 
 
@@ -150,7 +150,7 @@ class ItemUndoEvent(BaseEvent):
     """Item undo event."""
 
     type: Literal[EventType.ITEM_UNDO]
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     before_id: int = Field(..., description="Item ID before undo")
     after_id: int = Field(..., description="Item ID after undo")
     gold_gain: int = Field(..., description="Gold gained from undo")
@@ -161,7 +161,7 @@ class ChampionKillEvent(BaseEvent):
 
     type: Literal[EventType.CHAMPION_KILL]
     killer_id: int = Field(..., ge=0, le=10, description="0 for execute")
-    victim_id: int = Field(..., ge=1, le=10)
+    victim_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     position: Position
     assisting_participant_ids: list[int] = Field(default_factory=list)
     bounty: int = Field(0, description="Base bounty gold")
@@ -175,7 +175,7 @@ class WardPlacedEvent(BaseEvent):
     """Ward placement event."""
 
     type: Literal[EventType.WARD_PLACED]
-    creator_id: int = Field(..., ge=1, le=10)
+    creator_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     ward_type: WardType
 
 
@@ -191,7 +191,7 @@ class BuildingKillEvent(BaseEvent):
     """Building destruction event."""
 
     type: Literal[EventType.BUILDING_KILL]
-    killer_id: int = Field(..., ge=0, le=10)
+    killer_id: int = Field(..., ge=0, le=16)  # Support Arena (2v2v2v2)
     assisting_participant_ids: list[int] = Field(default_factory=list)
     building_type: BuildingType
     position: Position
@@ -236,7 +236,7 @@ class ChampionTransformEvent(BaseEvent):
     """Champion transformation event (Kayn, etc)."""
 
     type: Literal[EventType.CHAMPION_TRANSFORM]
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     transform_type: str
 
 

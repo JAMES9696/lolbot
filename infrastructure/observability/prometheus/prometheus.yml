@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "chimera_app"
+    scrape_timeout: 5s
+    static_configs:
+      # On macOS/Windows Docker, host.docker.internal points to host network.
+      # On Linux, fall back to localhost if app runs on host.
+      - targets: ["host.docker.internal:3000", "localhost:3000"]
+        labels:
+          service: chimera-app
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093

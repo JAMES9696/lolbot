@@ -6,7 +6,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
-from src.config import get_settings
+from src.config.settings import get_settings
 from src.core.ports import CachePort
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,9 @@ class RedisAdapter(CachePort):
             return
 
         try:
+            # Chaos: simulate Redis down
+            if getattr(self.settings, "chaos_redis_down", False):
+                raise ConnectionError("Injected chaos: Redis down")
             self._client = await aioredis.from_url(
                 self.settings.redis_url,
                 encoding="utf-8",

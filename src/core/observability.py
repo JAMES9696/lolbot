@@ -1,4 +1,4 @@
-"""Observability framework for Project Chimera.
+"""Observability framework for 蔚-上城人.
 
 This module provides the core debugging and monitoring capabilities
 through the llm_debug_wrapper decorator and structured logging.
@@ -17,7 +17,7 @@ from typing import Any, TypeVar, cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
-from structlog.contextvars import bind_contextvars, unbind_contextvars
+from structlog.contextvars import bind_contextvars, merge_contextvars, unbind_contextvars
 
 # Configure structured logging
 structlog.configure(
@@ -27,6 +27,7 @@ structlog.configure(
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.TimeStamper(fmt="iso"),
+        merge_contextvars,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
@@ -40,7 +41,7 @@ structlog.configure(
         structlog.processors.dict_tracebacks,
         structlog.dev.ConsoleRenderer()
         if sys.stderr.isatty()
-        else structlog.processors.JSONRenderer(),  # type: ignore[list-item]
+        else structlog.processors.JSONRenderer(),
     ],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
@@ -55,7 +56,8 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # Sensitive data redaction pattern
 _SENSITIVE_KEY_RE = re.compile(
-    r"(token|key|secret|password|pass|authorization|auth|client_secret)", re.IGNORECASE
+    r"(token|key|secret|password|pass|authorization|auth|client_secret|puuid|discord_id|summoner_id|user_id)",
+    re.IGNORECASE,
 )
 
 
@@ -152,6 +154,7 @@ def llm_debug_wrapper(
     max_arg_length: int = 1000,
     log_level: str = "INFO",
     add_metadata: dict[str, Any] | None = None,
+    warn_over_ms: float | None = None,
 ) -> Callable[[F], F]:
     """Decorator for comprehensive function tracing and debugging.
 
@@ -206,11 +209,11 @@ def llm_debug_wrapper(
                 }
 
             # Bind context variables for correlation
+            # Keep existing correlation_id if already bound by caller
             bind_contextvars(execution_id=execution_id)
 
-            # Log function entry
-            await logger.alog(
-                log_level.lower(),
+            # Log function entry (sync logging from async context is fine)
+            getattr(logger, log_level.lower())(
                 f"Executing async function: {trace.function_name}",
                 execution_id=execution_id,
                 args=trace.args if capture_args else None,
@@ -232,13 +235,28 @@ def llm_debug_wrapper(
                     trace.result = _redact_obj(_serialize_value(result, max_arg_length))
 
                 # Log success
-                await logger.alog(
-                    log_level.lower(),
+                getattr(logger, log_level.lower())(
                     f"Successfully executed: {trace.function_name}",
                     execution_id=execution_id,
                     duration_ms=trace.duration_ms,
                     result=trace.result if capture_result else None,
                 )
+
+                # Optional performance warning when exceeding threshold
+                if warn_over_ms is not None and trace.duration_ms is not None:
+                    try:
+                        if trace.duration_ms > warn_over_ms:
+                            logger.warning(
+                                "Operation exceeded performance threshold",
+                                function_name=trace.function_name,
+                                execution_id=execution_id,
+                                duration_ms=trace.duration_ms,
+                                warn_over_ms=warn_over_ms,
+                            )
+                    except Exception:
+                        pass
+
+                return result
 
             except Exception as e:
                 # Calculate duration even on failure
@@ -249,7 +267,7 @@ def llm_debug_wrapper(
                 trace.error_traceback = traceback.format_exc()
 
                 # Log error with full context
-                await logger.aerror(
+                logger.error(
                     "Error in function",
                     function_name=trace.function_name,
                     execution_id=execution_id,
@@ -294,8 +312,7 @@ def llm_debug_wrapper(
             bind_contextvars(execution_id=execution_id)
 
             # Log function entry
-            logger.log(
-                log_level.lower(),
+            getattr(logger, log_level.lower())(
                 f"Executing function: {trace.function_name}",
                 execution_id=execution_id,
                 args=trace.args if capture_args else None,
@@ -317,13 +334,26 @@ def llm_debug_wrapper(
                     trace.result = _redact_obj(_serialize_value(result, max_arg_length))
 
                 # Log success
-                logger.log(
-                    log_level.lower(),
+                getattr(logger, log_level.lower())(
                     f"Successfully executed: {trace.function_name}",
                     execution_id=execution_id,
                     duration_ms=trace.duration_ms,
                     result=trace.result if capture_result else None,
                 )
+
+                # Optional performance warning when exceeding threshold
+                if warn_over_ms is not None and trace.duration_ms is not None:
+                    try:
+                        if trace.duration_ms > warn_over_ms:
+                            logger.warning(
+                                "Operation exceeded performance threshold",
+                                function_name=trace.function_name,
+                                execution_id=execution_id,
+                                duration_ms=trace.duration_ms,
+                                warn_over_ms=warn_over_ms,
+                            )
+                    except Exception:
+                        pass
 
                 return result
 
@@ -389,3 +419,89 @@ def trace_adapter(func: F) -> F:
         log_level="INFO",
         add_metadata={"layer": "adapter"},
     )(func)
+
+
+# -------------------------
+# Correlation ID management
+# -------------------------
+def set_correlation_id(correlation_id: str) -> None:
+    """Bind a correlation_id into the structured log context.
+
+    Downstream llm_debug_wrapper logs will automatically include it.
+    """
+    try:
+        bind_contextvars(correlation_id=correlation_id)
+    except Exception:
+        pass
+
+
+def clear_correlation_id() -> None:
+    """Remove correlation_id from the structured log context."""
+    try:
+        unbind_contextvars("correlation_id")
+    except Exception:
+        pass
+
+
+def configure_stdlib_json_logging(level: str = "INFO", file_target: str | None = None) -> None:
+    """Configure stdlib logging to emit structured JSON and merge contextvars.
+
+    This bridges stdlib logging and structlog so that:
+    - logging.getLogger(...) emits JSON with correlation_id, execution_id, etc.
+    - structlog logs go through the same ProcessorFormatter for consistency.
+    - Optional file handler writes identical JSON lines to disk.
+
+    Args:
+        level: Root log level (e.g., "INFO", "DEBUG").
+        file_target: Optional path to a logfile to receive structured logs.
+    """
+    import logging
+
+    from structlog.stdlib import ProcessorFormatter
+
+    timestamper = structlog.processors.TimeStamper(fmt="iso")
+
+    # Format stdlib LogRecord -> event_dict -> JSON
+    formatter = ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+        foreign_pre_chain=[
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            timestamper,
+            merge_contextvars,
+            structlog.processors.dict_tracebacks,
+        ],
+    )
+
+    # Handlers: stdout + optional file
+    root = logging.getLogger()
+    root.handlers = []
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(formatter)
+    root.addHandler(sh)
+
+    if file_target:
+        try:
+            fh = logging.FileHandler(file_target, encoding="utf-8")
+            fh.setFormatter(formatter)
+            root.addHandler(fh)
+        except Exception:
+            # Don't fail startup because of file handler issues
+            pass
+
+    # Ensure structlog emits event_dicts to be formatted by ProcessorFormatter
+    structlog.configure(
+        processors=[
+            merge_contextvars,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            timestamper,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )

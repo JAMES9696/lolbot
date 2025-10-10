@@ -1,5 +1,5 @@
 """
-Common data types and base models for Project Chimera.
+Common data types and base models for 蔚-上城人.
 All models use Pydantic V2 with strict type checking.
 """
 

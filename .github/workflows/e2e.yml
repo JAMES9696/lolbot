@@ -1,0 +1,65 @@
+name: E2E Production Healthcheck
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Safe defaults for CI to avoid hitting real services
+      APP_ENV: "ci"
+      APP_DEBUG: "false"
+      FEATURE_AI_ANALYSIS_ENABLED: "true"
+      MOCK_RSO_ENABLED: "true"
+      RIOT_API_KEY: "ci-dummy"
+      GEMINI_API_KEY: "ci-dummy"
+      DISCORD_BOT_TOKEN: "ci-dummy"
+      # Use local Redis/Postgres defaults unless overridden via secrets
+      REDIS_URL: "redis://localhost:6379/0"
+      DATABASE_URL: "postgresql://localhost/lolbot"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Optional: poetry if pyproject is authoritative
+          pip install poetry
+          poetry install --no-interaction --no-ansi
+
+      - name: Run E2E suite (key flows only)
+        run: |
+          pytest -q -k "e2e or team or paginated or ab_cohort or v2_json_validation or arena_compliance or v23_mode_detection or view_mode_awareness"
+
+      - name: Notify Discord (success)
+        if: success() && env.DISCORD_CI_WEBHOOK != ''
+        env:
+          DISCORD_CI_WEBHOOK: ${{ secrets.DISCORD_CI_WEBHOOK }}
+        run: |
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"username\":\"CI Healthcheck\",\"content\":\"✅ E2E passed on ${GITHUB_REF_NAME} at ${GITHUB_RUN_NUMBER}.\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            "$DISCORD_CI_WEBHOOK"
+
+      - name: Notify Discord (failure)
+        if: failure() && env.DISCORD_CI_WEBHOOK != ''
+        env:
+          DISCORD_CI_WEBHOOK: ${{ secrets.DISCORD_CI_WEBHOOK }}
+        run: |
+          curl -s -H "Content-Type: application/json" \
+            -d "{\"username\":\"CI Healthcheck\",\"content\":\"❌ E2E FAILED on ${GITHUB_REF_NAME} at ${GITHUB_RUN_NUMBER}.\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            "$DISCORD_CI_WEBHOOK"

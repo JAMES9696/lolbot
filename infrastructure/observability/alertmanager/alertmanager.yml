@@ -1,0 +1,20 @@
+route:
+  receiver: 'chimera-discord'
+  group_by: ['alertname','service']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 2h
+
+receivers:
+  - name: 'chimera-discord'
+    webhook_configs:
+      - url: 'http://host.docker.internal:3000/alerts'
+        # Use Authorization Bearer header instead of query token to reduce leakage
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: '61f6d9f2dd80b16d219747e4e419fac90cda1ddb341d4eac03c17bb5e472f21c'
+          # NOTE: If you prefer a custom header, switch to headers once supported by your AM build:
+          # headers:
+          #   X-Auth-Token: '${ALERT_WEBHOOK_SECRET}'
+        send_resolved: true

@@ -1,5 +1,5 @@
 """
-Project Chimera - AI-Powered LoL Discord Bot
+蔚-上城人 - AI-Powered LoL Discord Bot
 ==============================================
 
 A hexagonal architecture implementation for a Discord bot that integrates

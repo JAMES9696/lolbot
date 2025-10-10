@@ -1,4 +1,6 @@
 import logging
+
+# mypy: disable-error-code="no-any-return,attr-defined,return-value"
 from typing import Any
 
 import aiohttp

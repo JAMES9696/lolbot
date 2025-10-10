@@ -1,4 +1,4 @@
-# Project Chimera - Infrastructure as Code (IaC)
+# 蔚-上城人 - Infrastructure as Code (IaC)
 # PostgreSQL and Redis services for LoL Discord Bot
 
 version: '3.9'

@@ -1,0 +1,64 @@
+{
+  "title": "Chimera Mode Drilldown",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "LLM Latency P95 by Mode",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(chimera_llm_latency_seconds_by_mode_bucket[5m])) by (le, model, game_mode))",
+          "legendFormat": "{{game_mode}}/{{model}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "LLM Tokens Rate by Mode",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chimera_llm_tokens_total_by_mode{type=\"prompt\"}[5m])) by (model, game_mode)",
+          "legendFormat": "prompt {{game_mode}}/{{model}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chimera_llm_tokens_total_by_mode{type=\"completion\"}[5m])) by (model, game_mode)",
+          "legendFormat": "completion {{game_mode}}/{{model}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "graph",
+      "title": "JSON Validation Failure Rate by Mode",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chimera_json_validation_errors_total_by_mode{schema=\"v2_team_analysis\"}[15m])) by (game_mode, error)",
+          "legendFormat": "{{game_mode}}/{{error}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "graph",
+      "title": "Cost Rate by Mode (USD/s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chimera_llm_cost_usd_total_by_mode[5m])) by (model, game_mode)",
+          "legendFormat": "{{game_mode}}/{{model}}"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    }
+  ]
+}

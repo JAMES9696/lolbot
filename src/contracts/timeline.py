@@ -60,13 +60,13 @@ class DamageStats(BaseContract):
 class ParticipantFrame(BaseContract):
     """Participant state at a specific frame."""
 
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     champion_stats: ChampionStats
     damage_stats: DamageStats
     current_gold: int = Field(0)
     gold_per_second: int = Field(0)
     jungle_minions_killed: int = Field(0)
-    level: int = Field(1, ge=1, le=18)
+    level: int = Field(1, ge=1, le=30)  # Arena mode can exceed 18
     minions_killed: int = Field(0)
     position: Position
     time_enemy_spent_controlled: int = Field(0)
@@ -110,7 +110,7 @@ class Frame(BaseContract):
 class TimelineParticipant(BaseContract):
     """Participant mapping in timeline."""
 
-    participant_id: int = Field(..., ge=1, le=10)
+    participant_id: int = Field(..., ge=1, le=16)  # Support Arena (2v2v2v2)
     puuid: str = Field(..., description="Player's PUUID")
 
 

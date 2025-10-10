@@ -1,0 +1,82 @@
+{
+  "title": "Chimera A/B Testing (V1 vs V2)",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Avg Satisfaction by Variant",
+      "datasource": "Chimera Postgres",
+      "targets": [
+        {
+          "format": "time_series",
+          "refId": "A",
+          "rawSql": "SELECT $__time(created_at), prompt_variant AS variant, AVG(CASE WHEN feedback_type IN ('up','thumbs_up','like') THEN 1 WHEN feedback_type IN ('down','thumbs_down','dislike') THEN -1 WHEN feedback_type IN ('star','favorite') THEN 0.5 ELSE 0 END) AS value FROM feedback_events WHERE $__timeFilter(created_at) GROUP BY 1,2 ORDER BY 1;"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "bargauge",
+      "title": "P95 E2E Latency (ms) by Cohort",
+      "datasource": "Chimera Postgres",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT ab_cohort AS cohort, percentile_cont(0.95) WITHIN GROUP (ORDER BY total_processing_time_ms) AS p95_ms FROM ab_experiment_metadata WHERE $__timeFilter(created_at) GROUP BY ab_cohort;"
+        }
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "Avg Tokens (Prompt vs Completion) by Variant",
+      "datasource": "Chimera Postgres",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT ab_cohort AS cohort, AVG(llm_input_tokens) AS avg_prompt_tokens, AVG(llm_output_tokens) AS avg_completion_tokens FROM ab_experiment_metadata WHERE $__timeFilter(created_at) GROUP BY ab_cohort ORDER BY cohort;"
+        }
+      ],
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "graph",
+      "title": "JSON Validation Failures (v2_team_analysis)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chimera_json_validation_errors_total{schema=\"v2_team_analysis\"}[5m])) by (error)",
+          "legendFormat": "{{error}}"
+        }
+      ],
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 8}
+    },
+    {
+      "type": "graph",
+      "title": "LLM Latency (p95) by Model",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(chimera_llm_latency_seconds_bucket[5m])) by (le, model))",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 14}
+    },
+    {
+      "type": "graph",
+      "title": "LLM Tokens (Prompt vs Completion)",
+      "datasource": "Prometheus",
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(chimera_llm_tokens_total{type=\"prompt\"}[5m])) by (model)", "legendFormat": "prompt {{model}}"},
+        {"refId": "B", "expr": "sum(rate(chimera_llm_tokens_total{type=\"completion\"}[5m])) by (model)", "legendFormat": "completion {{model}}"}
+      ],
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 14}
+    }
+  ]
+}

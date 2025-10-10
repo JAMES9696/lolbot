@@ -1,0 +1,103 @@
+groups:
+  - name: chimera-slo
+    rules:
+      # Availability SLO (success rate > 99.9%)
+      - alert: ChimeraHighErrorBurnShort
+        expr: |
+          (sum(rate(chimera_request_total{outcome!="success"}[5m])) by (service)
+            /
+           sum(rate(chimera_request_total[5m])) by (service))
+          > 0.005  # 5x error budget (0.1%) over 5m
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "High error burn (short) for {{ $labels.service }}"
+          description: "Error ratio over last 5m exceeds 5x budget for SLO 99.9%"
+
+      - alert: ChimeraHighErrorBurnLong
+        expr: |
+          (sum(rate(chimera_request_total{outcome!="success"}[1h])) by (service)
+            /
+           sum(rate(chimera_request_total[1h])) by (service))
+          > 0.001  # budget over 1h
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "High error burn (long) for {{ $labels.service }}"
+          description: "Error ratio over last 1h exceeds budget for SLO 99.9%"
+
+      # Latency SLO (P95 < 15s)
+      - alert: ChimeraLatencyP95Breached
+        expr: |
+          histogram_quantile(0.95, sum(rate(chimera_request_latency_seconds_bucket[5m])) by (le, service)) > 15
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "P95 latency > 15s for {{ $labels.service }}"
+          description: "User-facing latency degraded over last 5m"
+
+      # Riot API error ratio < 0.1%
+      - alert: RiotAPIErrorRateHigh
+        expr: |
+          sum(rate(chimera_riot_api_requests_total{status!="success"}[15m]))
+            /
+          sum(rate(chimera_riot_api_requests_total[15m])) > 0.001
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Riot API error ratio high"
+          description: "External dependency stability issue"
+
+      # JSON validation failure ratio >= 1%
+      - alert: JSONValidationFailureHigh
+        expr: |
+          (sum(rate(chimera_json_validation_errors_total{schema="v2_team_analysis"}[15m]))
+            /
+           clamp_min(sum(rate(chimera_llm_requests_total[15m])), 1)) > 0.01
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "V2 JSON validation failure ratio >1%"
+          description: "Investigate LLM JSON Mode stability"
+
+  - name: chimera-finops
+    rules:
+      - alert: MonthlyBudgetProjectedToExceed
+        expr: |
+          sum(rate(chimera_llm_cost_usd_total[1h]))*3600*24*30
+            > 100
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Projected monthly cost exceeds budget"
+          description: "Current projection is above default budget ($100). Adjust threshold as needed."
+
+  - name: chimera-queue
+    rules:
+      # Celery queue backlog alert
+      - alert: CeleryQueueBacklog
+        expr: |
+          chimera_celery_queue_length{queue="matches"} > 100
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "Celery matches queue backlog > 100"
+          description: "Worker may be overloaded or stuck. Current queue length: {{ $value }}"
+
+      # Celery queue completely stuck (no movement for 30m)
+      - alert: CeleryQueueStuck
+        expr: |
+          chimera_celery_queue_length{queue=~"matches|ai"} > 5
+        for: 30m
+        labels:
+          severity: page
+        annotations:
+          summary: "Celery queue {{ $labels.queue }} stuck for 30m"
+          description: "Queue depth {{ $value }} unchanged for 30 minutes. Worker may be dead."
