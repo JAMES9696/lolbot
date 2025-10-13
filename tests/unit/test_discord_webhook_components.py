@@ -6,6 +6,7 @@ Test Coverage:
 - Component limit enforcement (max 5 buttons per row)
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -65,7 +66,7 @@ async def test_publish_match_analysis_includes_voice_button(
             mock_embed.to_dict.return_value = {"title": "Analysis Result"}
             mock_render.return_value = mock_embed
 
-            # Mock HTTP session
+            # Mock HTTP session (must set both _session and _session_loop to prevent recreation)
             mock_response = MagicMock()
             mock_response.status = 200
             mock_response.__aenter__ = AsyncMock(return_value=mock_response)
@@ -75,6 +76,7 @@ async def test_publish_match_analysis_includes_voice_button(
             mock_session.patch.return_value = mock_response
             mock_session.closed = False
             adapter._session = mock_session
+            adapter._session_loop = asyncio.get_running_loop()  # Prevent session recreation
 
             # Call publish_match_analysis
             result = await adapter.publish_match_analysis(
@@ -144,7 +146,7 @@ async def test_publish_match_analysis_no_voice_button_when_disabled(
             mock_embed.to_dict.return_value = {"title": "Analysis Result"}
             mock_render.return_value = mock_embed
 
-            # Mock HTTP session
+            # Mock HTTP session (must set both _session and _session_loop to prevent recreation)
             mock_response = MagicMock()
             mock_response.status = 200
             mock_response.__aenter__ = AsyncMock(return_value=mock_response)
@@ -154,6 +156,7 @@ async def test_publish_match_analysis_no_voice_button_when_disabled(
             mock_session.patch.return_value = mock_response
             mock_session.closed = False
             adapter._session = mock_session
+            adapter._session_loop = asyncio.get_running_loop()  # Prevent session recreation
 
             # Call publish_match_analysis
             result = await adapter.publish_match_analysis(
@@ -202,7 +205,7 @@ async def test_publish_match_analysis_respects_5_button_limit(
             mock_embed.to_dict.return_value = {"title": "Analysis Result"}
             mock_render.return_value = mock_embed
 
-            # Mock HTTP session
+            # Mock HTTP session (must set both _session and _session_loop to prevent recreation)
             mock_response = MagicMock()
             mock_response.status = 200
             mock_response.__aenter__ = AsyncMock(return_value=mock_response)
@@ -212,6 +215,7 @@ async def test_publish_match_analysis_respects_5_button_limit(
             mock_session.patch.return_value = mock_response
             mock_session.closed = False
             adapter._session = mock_session
+            adapter._session_loop = asyncio.get_running_loop()  # Prevent session recreation
 
             # Call publish_match_analysis
             await adapter.publish_match_analysis(
@@ -252,7 +256,7 @@ async def test_publish_match_analysis_components_optional_on_failure(
             mock_embed.to_dict.return_value = {"title": "Analysis Result"}
             mock_render.return_value = mock_embed
 
-            # Mock HTTP session
+            # Mock HTTP session (must set both _session and _session_loop to prevent recreation)
             mock_response = MagicMock()
             mock_response.status = 200
             mock_response.__aenter__ = AsyncMock(return_value=mock_response)
@@ -262,6 +266,7 @@ async def test_publish_match_analysis_components_optional_on_failure(
             mock_session.patch.return_value = mock_response
             mock_session.closed = False
             adapter._session = mock_session
+            adapter._session_loop = asyncio.get_running_loop()  # Prevent session recreation
 
             # This should still succeed despite component error
             # Note: The actual implementation catches exceptions in component building
