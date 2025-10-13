@@ -7,7 +7,8 @@ import pytest
 
 
 @pytest.mark.skipif(False, reason="unit fast path; no network; pure mapping test")
-def test_ddragon_mapping_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_ddragon_mapping_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     验证：
     - DataDragonClient 能把符文/物品 ID 映射到中文名（通过猴子补丁伪造静态数据）。
@@ -108,7 +109,7 @@ def test_ddragon_mapping_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     match_details = {"info": {"participants": [target]}}
 
     # --- 执行 ---
-    text, payload = enricher.build_summary_for_target(match_details, target_puuid="p0")
+    text, payload = await enricher.build_summary_for_target(match_details, target_puuid="p0")
 
     assert "精密 - 强攻" in text
     # 应该能把物品中文名拼出来（无 OPGG 对比时为玩家实装清单）
@@ -126,7 +127,8 @@ def test_ddragon_mapping_and_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert {5005, 5008, 5002}.issubset(shard_ids)
 
 
-def test_build_summary_fallback_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_build_summary_fallback_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     当目标 PUUID 缺失但 Riot ID 能匹配时，TeamBuildsEnricher 应该回退到名字匹配。
     期望：仍然生成摘要，并在 payload 中暴露 resolved_puuid。
@@ -225,7 +227,7 @@ def test_build_summary_fallback_by_name(monkeypatch: pytest.MonkeyPatch) -> None
         }
     }
 
-    text, payload = enricher.build_summary_for_target(
+    text, payload = await enricher.build_summary_for_target(
         match_details,
         target_puuid="",
         target_name="Fuji shan xia#NA1",
