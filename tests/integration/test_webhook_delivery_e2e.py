@@ -49,6 +49,11 @@ class TestWebhookDeliveryE2E:
                 vision_score=62.0,
                 objective_score=90.0,
                 teamplay_score=72.5,
+                growth_score=68.0,
+                tankiness_score=55.0,
+                damage_composition_score=75.0,
+                survivability_score=60.0,
+                cc_contribution_score=70.0,
                 overall_score=77.6,
             ),
             champion_assets_url="https://example.com/yasuo.png",
@@ -160,6 +165,11 @@ class TestWebhookDeliveryE2E:
                 vision_score=40.0,
                 objective_score=50.0,
                 teamplay_score=45.0,
+                growth_score=52.0,
+                tankiness_score=48.0,
+                damage_composition_score=58.0,
+                survivability_score=42.0,
+                cc_contribution_score=50.0,
                 overall_score=50.0,
             ),
             champion_assets_url="https://example.com/zed.png",
@@ -170,6 +180,7 @@ class TestWebhookDeliveryE2E:
         # Mock 404 response (token expired)
         mock_response = MagicMock()
         mock_response.status = 404
+        mock_response.text = AsyncMock(return_value="Unknown Webhook")
         mock_response.__aenter__ = AsyncMock(return_value=mock_response)
         mock_response.__aexit__ = AsyncMock(return_value=None)
 
@@ -186,8 +197,10 @@ class TestWebhookDeliveryE2E:
                     analysis_report=report,
                 )
 
+            # 404 with "Unknown Webhook" indicates token/webhook is invalid/expired
+            error_msg = str(exc_info.value).lower()
             assert (
-                "token expired" in str(exc_info.value).lower()
+                "404" in error_msg and "webhook" in error_msg
             ), "Should raise error for expired token"
 
     @pytest.mark.asyncio
