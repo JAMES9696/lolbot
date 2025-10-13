@@ -56,73 +56,102 @@ class TestRiotAPIAdapter:
 
     @pytest.mark.asyncio
     async def test_get_match_history_success(self, adapter):
-        """Test successful match history retrieval."""
-        # Mock match objects
-        mock_matches = []
-        for i in range(5):
-            mock_match = MagicMock()
-            mock_match.id = f"NA1_{1000000 + i}"
-            mock_matches.append(mock_match)
+        """Test successful match history retrieval via direct HTTP API."""
+        # Mock HTTP response with match IDs
+        mock_match_ids = [f"NA1_{1000000 + i}" for i in range(3)]
 
-        # Mock summoner and match history
-        mock_summoner = MagicMock()
-        mock_match_history = MagicMock()
-        mock_match_history.__iter__ = MagicMock(return_value=iter(mock_matches))
+        # Mock aiohttp session and response
+        session = MagicMock()
+        session.closed = False
 
-        with patch("asyncio.to_thread") as mock_to_thread:
-            # First call returns summoner, second returns match history
-            mock_to_thread.side_effect = [mock_summoner, mock_match_history]
+        response = MagicMock()
+        response.status = 200
+        response.json = AsyncMock(return_value=mock_match_ids)
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock()
+        session.get.return_value = response
 
-            # Mock the async generator
-            async def mock_async_gen(*args):
-                for match in mock_matches[:3]:  # Limit to 3
-                    yield match
+        adapter._session = session
+        adapter._session_loop = asyncio.get_running_loop()
 
-            with patch.object(adapter, "_async_match_generator", mock_async_gen):
-                result = await adapter.get_match_history("test_puuid", "NA", count=3)
+        result = await adapter.get_match_history("test_puuid", "NA", count=3)
 
         assert len(result) == 3
         assert all(match_id.startswith("NA1_") for match_id in result)
+        session.get.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_match_timeline_success(self, adapter):
-        """Test successful timeline retrieval."""
-        # Mock timeline object
-        mock_timeline = MagicMock()
-        mock_timeline.frame_interval = 60000
-        mock_timeline.frames = []
-        mock_timeline.match.id = "NA1_1000000"
-        mock_timeline.match.participants = []
+        """Test successful timeline retrieval via direct HTTP API."""
+        # Mock HTTP timeline response
+        mock_timeline_data = {
+            "metadata": {"dataVersion": "2", "matchId": "NA1_1000000", "participants": []},
+            "info": {
+                "frameInterval": 60000,
+                "frames": [
+                    {"timestamp": i * 60000, "participantFrames": {}, "events": []}
+                    for i in range(3)
+                ],
+            },
+        }
 
-        # Add mock frames
-        for i in range(3):
-            mock_frame = MagicMock()
-            mock_frame.timestamp = i * 60000
-            mock_frame.events = []
-            mock_timeline.frames.append(mock_frame)
+        # Mock aiohttp session and responses
+        session = MagicMock()
+        session.closed = False
 
-        mock_match = MagicMock()
-        mock_match.timeline = mock_timeline
+        # Timeline response
+        timeline_response = MagicMock()
+        timeline_response.status = 200
+        timeline_response.json = AsyncMock(return_value=mock_timeline_data)
+        timeline_response.__aenter__ = AsyncMock(return_value=timeline_response)
+        timeline_response.__aexit__ = AsyncMock()
 
-        with patch("asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = [mock_match, mock_timeline]
+        # Match details response (called internally by get_match_timeline)
+        match_response = MagicMock()
+        match_response.status = 200
+        match_response.json = AsyncMock(
+            return_value={
+                "metadata": {"matchId": "NA1_1000000"},
+                "info": {"gameId": 1000000, "participants": []},
+            }
+        )
+        match_response.__aenter__ = AsyncMock(return_value=match_response)
+        match_response.__aexit__ = AsyncMock()
 
-            result = await adapter.get_match_timeline("NA1_1000000", "NA")
+        # session.get returns timeline first, then match details
+        session.get.side_effect = [timeline_response, match_response]
+
+        adapter._session = session
+        adapter._session_loop = asyncio.get_running_loop()
+
+        result = await adapter.get_match_timeline("NA1_1000000", "NA")
 
         assert result is not None
         assert "metadata" in result
         assert "info" in result
-        assert result["info"]["frameInterval"] == 60000
+        assert result["info"]["frame_interval"] == 60000
         assert len(result["info"]["frames"]) == 3
 
     @pytest.mark.asyncio
-    async def test_get_match_timeline_rate_limit(self, adapter):
-        """Test rate limit handling for timeline retrieval."""
-        from cassiopeia.datastores.riotapi.common import APIError
+    async def test_get_match_timeline_404_not_found(self, adapter):
+        """Test timeline retrieval returns None for 404 (replaces rate limit test)."""
+        # Mock 404 response
+        session = MagicMock()
+        session.closed = False
 
-        with patch("asyncio.to_thread", side_effect=APIError("Rate limited", 429)):
-            result = await adapter.get_match_timeline("NA1_1000000", "NA")
-            assert result is None
+        response = MagicMock()
+        response.status = 404
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock()
+        session.get.return_value = response
+
+        adapter._session = session
+        adapter._session_loop = asyncio.get_running_loop()
+
+        result = await adapter.get_match_timeline("NA1_1000000", "NA")
+
+        # Should return None for 404 (match not found)
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_match_details_success(self, adapter):
@@ -187,18 +216,25 @@ class TestRiotAPIAdapter:
         assert adapter._convert_region("unknown") == "NA"  # Default
 
     @pytest.mark.asyncio
-    async def test_async_match_generator(self, adapter):
-        """Test the async match generator."""
-        # Mock match history
-        mock_matches = [MagicMock(id=f"match_{i}") for i in range(5)]
-        mock_match_history = MagicMock()
-        mock_match_history.__iter__ = MagicMock(return_value=iter(mock_matches))
+    async def test_get_match_history_handles_errors(self, adapter):
+        """Test match history error handling (replaces obsolete _async_match_generator test)."""
+        # Mock session with 500 error response
+        session = MagicMock()
+        session.closed = False
 
-        matches = []
-        async for match in adapter._async_match_generator(mock_match_history, 3):
-            matches.append(match)
+        response = MagicMock()
+        response.status = 500
+        response.text = AsyncMock(return_value="Internal Server Error")
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock()
+        session.get.return_value = response
 
-        assert len(matches) == 3
+        adapter._session = session
+        adapter._session_loop = asyncio.get_running_loop()
+
+        # Should return empty list on error, not raise
+        result = await adapter.get_match_history("test_puuid", "NA", count=3)
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_session_recreated_across_event_loops(self, adapter, monkeypatch):
