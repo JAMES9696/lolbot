@@ -61,7 +61,7 @@ def test_render_error_without_retry():
     print(f"📋 Embed Description:\n{embed.description}")
 
     # Verify smart suggestion is present
-    assert "⚠️ **注意**: 该比赛数据不完整" in embed.description
+    assert "⚠️ **注意**: 数据不完整或不支持该对局" in embed.description
     assert "重试可能无效" in embed.description
     print("\n✅ Smart suggestion for retry=False verified!")
 
