@@ -86,7 +86,7 @@ class _HallucinatingGemini:
 
 @pytest.mark.asyncio
 async def test_tts_summary_hallucination_becomes_soft_ok() -> None:
-    """LLM 出现“数据缺失”提示时，不应抛异常；应回退到 narrative 文本。"""
+    """LLM 出现"数据缺失"提示时，不应抛异常；应回退到 fallback 文本。"""
     adapter = _HallucinatingGemini()
     summary = V1ScoreSummary(
         combat_score=72.0,
@@ -113,20 +113,29 @@ async def test_tts_summary_hallucination_becomes_soft_ok() -> None:
     )
 
     assert outcome is not None
-    assert outcome.source == "llm"
+    # After hallucination detection, system now degrades to fallback instead of sanitizing LLM output
+    assert outcome.source == "fallback"
     assert "无法生成" not in outcome.text
-    assert outcome.text.strip(), "LLM 输出应当经过清洗后保留可播报文本"
+    assert outcome.text.strip(), "Fallback 输出应包含可播报文本"
     valid, hints = analysis_tasks._validate_tts_candidate(outcome.text)  # type: ignore[attr-defined]
-    assert valid, f"Sanitized LLM 文本应通过校验 hints={hints}"
-    assert "fallback_used" not in (outcome.soft_hints or ())
+    assert valid, f"Fallback 文本应通过校验 hints={hints}"
+    assert "fallback_used" in (outcome.soft_hints or ())
 
 
 def test_tts_summary_detects_data_load_hallucination() -> None:
-    """包含“数据加载”等措辞的摘要应判定为无效，促使回退。"""
-    candidate = "兄弟们，这局比赛数据加载遇到了点小问题，但我们先聊聊复盘。"
-    valid, hints = analysis_tasks._validate_tts_candidate(candidate)  # type: ignore[attr-defined]
+    """包含"数据加载"等措辞的摘要会被 _sanitize_tts_summary 清除，导致文本过短而无效。"""
+    # The raw candidate contains banned phrase
+    candidate_with_hallucination = "兄弟们，这局比赛数据加载遇到了点小问题，但我们先聊聊复盘。"
+
+    # After sanitization, banned tokens are removed
+    sanitized = analysis_tasks._sanitize_tts_summary(candidate_with_hallucination)  # type: ignore[attr-defined]
+    # "数据加载" is removed, leaving: "兄弟们，这局比赛遇到了点小问题，但我们先聊聊复盘。"
+    assert "数据加载" not in sanitized
+
+    # The sanitized text should now be too short (< 60 chars)
+    valid, hints = analysis_tasks._validate_tts_candidate(sanitized)  # type: ignore[attr-defined]
     assert not valid
-    assert any("banned" in hint for hint in hints)
+    assert "too_short" in hints
 
 
 class _RecordingGemini:
@@ -190,7 +199,8 @@ async def test_tts_summary_prompt_includes_structured_context() -> None:
     assert "=== 战局骨架" in prompt
     assert "战场基调" in prompt
     assert "可引用数字" in prompt
-    assert "最多挑其中一到两个" in prompt
+    # Prompt wording changed from "最多挑其中一到两个" to "播报时挑一两个即可"
+    assert "播报时挑" in prompt or "挑一两个" in prompt
     assert "K/D/A" in prompt
     # CC data is deliberately excluded from TTS context per architectural decision
     # (see analysis_tasks.py line 1962-2043 for full rationale)
