@@ -13,8 +13,11 @@ observability (RSO and feedback flows).
 
 import logging
 from typing import Any
+import time
 
 from aiohttp import web
+import aiohttp
+from pathlib import Path
 
 from src.adapters.database import DatabaseAdapter
 from src.adapters.redis_adapter import RedisAdapter
@@ -24,6 +27,18 @@ from src.config.settings import get_settings
 from src.core.observability import clear_correlation_id, llm_debug_wrapper, set_correlation_id
 
 logger = logging.getLogger(__name__)
+
+
+def _select_personal_tts_summary(meta: dict[str, Any]) -> str | None:
+    if not isinstance(meta, dict):
+        return None
+    candidate = meta.get("tts_summary")
+    if not isinstance(candidate, str):
+        return None
+    candidate = candidate.strip()
+    if not candidate:
+        return None
+    return candidate
 
 
 class RSOCallbackServer:
@@ -48,6 +63,8 @@ class RSOCallbackServer:
         self.redis = redis_adapter
         self.app = web.Application()
         self.discord_adapter = discord_adapter
+        # 短期播放防抖（guild_id, channel_id) → last_ts
+        self._recent_voice_keys: dict[tuple[int, int], float] = {}
         self._setup_routes()
 
     def _setup_routes(self) -> None:
@@ -86,6 +103,25 @@ class RSOCallbackServer:
                 )
         except Exception as exc:
             logger.error(f"Failed to configure static audio route: {exc}")
+
+        # Serve build visual assets (出装图) if路径存在
+        try:
+            from pathlib import Path
+
+            settings = get_settings()
+            builds_dir = Path(settings.build_visual_storage_path)
+            if not builds_dir.is_absolute():
+                builds_dir = Path.cwd() / builds_dir
+            if builds_dir.exists():
+                self.app.router.add_static("/static/builds/", builds_dir, show_index=False)
+                logger.info(f"Serving build visuals from {builds_dir}")
+            else:
+                logger.debug(
+                    "Build visual directory %s does not exist; static route not registered",
+                    builds_dir,
+                )
+        except Exception as exc:
+            logger.error(f"Failed to configure static build visual route: {exc}")
 
     @llm_debug_wrapper(
         capture_result=False,
@@ -267,7 +303,7 @@ class RSOCallbackServer:
 <body>
   <div class=\"wrap\">
     <h1>Mock OAuth – Select Test Account</h1>
-    <p class=\"meta\">state=<code>{state}</code> · discord_id=<code>{discord_id or 'unknown'}</code> · region=<code>{region}</code></p>
+    <p class=\"meta\">state=<code>{state}</code> · discord_id=<code>{discord_id or "unknown"}</code> · region=<code>{region}</code></p>
     <h3>Quick Picks</h3>
     <ul>
       {links_html}
@@ -430,7 +466,7 @@ class RSOCallbackServer:
         guild_id = int(data.get("guild_id"))
         channel_id = int(data.get("voice_channel_id"))
 
-        ok, msg = await self._broadcast_match_tts(guild_id, channel_id, match_id)
+        ok, msg = await self._broadcast_match_tts(guild_id, channel_id, match_id, None)
         return web.json_response({"ok": ok, "message": msg})
 
     async def trigger_broadcast(self, request: web.Request) -> web.Response:
@@ -494,7 +530,7 @@ class RSOCallbackServer:
                 "broadcast_tts_request",
                 extra={"match_id": match_id, "guild_id": guild_id, "channel_id": channel_id},
             )
-            ok, msg = await self._broadcast_match_tts(guild_id, channel_id, match_id)
+            ok, msg = await self._broadcast_match_tts(guild_id, channel_id, match_id, user_id)
             logger.info(
                 "broadcast_tts_result", extra={"match_id": match_id, "ok": ok, "status": msg}
             )
@@ -538,16 +574,18 @@ class RSOCallbackServer:
         try:
             import aiohttp
 
-            async with aiohttp.ClientSession() as sess:
-                async with sess.post(
+            async with (
+                aiohttp.ClientSession() as sess,
+                sess.post(
                     settings.alerts_discord_webhook,
                     json={"content": content or "(empty alert)"},
                     headers={"Content-Type": "application/json"},
-                ) as resp:
-                    if resp.status >= 300:
-                        txt = await resp.text()
-                        logger.error(f"Discord webhook failed: {resp.status} {txt}")
-                        return web.Response(status=500, text="discord send failed")
+                ) as resp,
+            ):
+                if resp.status >= 300:
+                    txt = await resp.text()
+                    logger.error(f"Discord webhook failed: {resp.status} {txt}")
+                    return web.Response(status=500, text="discord send failed")
         except Exception as e:
             logger.error(f"Discord webhook error: {e}")
             return web.Response(status=500, text="discord error")
@@ -555,7 +593,7 @@ class RSOCallbackServer:
         return web.json_response({"ok": True})
 
     async def _broadcast_match_tts(
-        self, guild_id: int, channel_id: int, match_id: str
+        self, guild_id: int, channel_id: int, match_id: str, user_id: int | None = None
     ) -> tuple[bool, str]:
         """Lookup TTS audio by match and broadcast in a voice channel.
 
@@ -563,7 +601,12 @@ class RSOCallbackServer:
         """
         logger.info(
             "_broadcast_match_tts_started",
-            extra={"match_id": match_id, "guild_id": guild_id, "channel_id": channel_id},
+            extra={
+                "match_id": match_id,
+                "guild_id": guild_id,
+                "channel_id": channel_id,
+                "user_id": user_id,
+            },
         )
         # Fetch analysis
         analysis = await self.db.get_analysis_result(match_id)
@@ -585,16 +628,24 @@ class RSOCallbackServer:
             logger.info(
                 "tts_audio_url_found_in_cache", extra={"match_id": match_id, "audio_url": audio_url}
             )
+            if not await self._audio_url_exists(audio_url):
+                logger.warning(
+                    "tts_audio_cache_miss_on_disk",
+                    extra={"match_id": match_id, "audio_url": audio_url},
+                )
+                audio_url = None
 
         # If no audio yet, try to synthesize from narrative
         if not audio_url:
             logger.info("tts_audio_url_missing_synthesizing", extra={"match_id": match_id})
             narrative = analysis.get("llm_narrative")
-            tts_summary = None
+            tts_summary = _select_personal_tts_summary(meta)
+            tts_options: dict[str, Any] = {}
             if isinstance(meta, dict):
-                summary_candidate = meta.get("tts_summary")
-                if isinstance(summary_candidate, str) and summary_candidate.strip():
-                    tts_summary = summary_candidate.strip()
+                recommended = meta.get("tts_recommended_params")
+                if isinstance(recommended, dict):
+                    tts_options = dict(recommended)
+            tts_options.setdefault("match_id", match_id)
             if not narrative:
                 logger.warning("no_narrative_for_tts", extra={"match_id": match_id})
                 return False, "no_narrative"
@@ -602,13 +653,19 @@ class RSOCallbackServer:
                 tts = TTSAdapter()
                 logger.info("tts_synthesis_starting", extra={"match_id": match_id})
                 # Prefer low-latency streaming if enabled
-                if get_settings().feature_voice_streaming_enabled and self.discord_adapter:
+                if (
+                    get_settings().feature_voice_streaming_enabled
+                    and self.discord_adapter
+                    and channel_id > 0
+                ):
                     logger.info("using_streaming_mode", extra={"match_id": match_id})
                     speech_source = tts_summary or narrative
                     audio_bytes: bytes | None = None
                     try:
                         audio_bytes = await tts.synthesize_speech_to_bytes(
-                            speech_source, (meta or {}).get("emotion")
+                            speech_source,
+                            (meta or {}).get("emotion"),
+                            options=tts_options,
                         )
                     except TTSError as err:
                         logger.warning(
@@ -657,7 +714,9 @@ class RSOCallbackServer:
                 logger.info("using_url_mode", extra={"match_id": match_id})
                 speech_source = tts_summary or narrative
                 audio_url = await tts.synthesize_speech_to_url(
-                    speech_source, (meta or {}).get("emotion")
+                    speech_source,
+                    (meta or {}).get("emotion"),
+                    options=tts_options,
                 )
                 if audio_url:
                     logger.info(
@@ -691,18 +750,112 @@ class RSOCallbackServer:
             return False, "audio_missing"
 
         logger.info(
-            "attempting_audio_playback", extra={"match_id": match_id, "audio_url": audio_url}
+            "attempting_audio_playback",
+            extra={
+                "match_id": match_id,
+                "audio_url": audio_url,
+                "channel_id": channel_id,
+                "user_id": user_id,
+            },
         )
-        ok = await self._play_audio(guild_id, channel_id, audio_url)
-        return ok, ("ok" if ok else "voice_play_failed")
+        if channel_id > 0:
+            ok = await self._play_audio(guild_id, channel_id, audio_url)
+            return ok, ("ok" if ok else "voice_play_failed")
+        if user_id is not None:
+            if not self.discord_adapter:
+                logger.error(
+                    "voice_channel_unavailable_for_tts",
+                    extra={
+                        "guild_id": guild_id,
+                        "match_id": match_id,
+                        "user_id": user_id,
+                        "reason": "no_discord_adapter",
+                    },
+                )
+                return False, "no_discord_adapter"
+            logger.info(
+                "attempting_user_channel_playback",
+                extra={"guild_id": guild_id, "match_id": match_id, "user_id": user_id},
+            )
+            ok = await self.discord_adapter.play_tts_to_user_channel(
+                guild_id=guild_id,
+                user_id=user_id,
+                audio_url=audio_url,
+            )
+            return ok, ("ok" if ok else "voice_play_failed")
+        logger.error(
+            "voice_channel_unavailable_for_tts",
+            extra={
+                "guild_id": guild_id,
+                "match_id": match_id,
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "reason": "no_channel_or_user",
+            },
+        )
+        return False, "no_voice_channel"
+
+    async def _audio_url_exists(self, audio_url: str) -> bool:
+        """Validate cached音频是否仍然可下载。"""
+
+        settings = get_settings()
+        base_url = (settings.audio_base_url or "").rstrip("/")
+        storage_root = Path(settings.audio_storage_path)
+
+        if base_url and audio_url.startswith(base_url):
+            rel_path = audio_url[len(base_url) :].lstrip("/")
+            candidate = storage_root / Path(rel_path)
+            return candidate.exists()
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=2)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.head(audio_url) as resp:
+                    return resp.status < 400
+        except Exception:
+            return False
 
     async def _play_audio(self, guild_id: int, channel_id: int, audio_url: str) -> bool:
         if not self.discord_adapter:
             logger.error("Discord adapter not attached; cannot play audio")
             return False
         try:
-            return await self.discord_adapter.play_tts_in_voice_channel(
-                guild_id=guild_id, voice_channel_id=channel_id, audio_url=audio_url
+            # 防抖：抑制 2 秒内重复播放，避免多次“已开始播报”
+            key = (int(guild_id), int(channel_id))
+            now = time.monotonic()
+            last = self._recent_voice_keys.get(key)
+            if last is not None and (now - last) < 2.0:
+                logger.info(
+                    "suppress_duplicate_voice_play",
+                    extra={
+                        "guild_id": guild_id,
+                        "channel_id": channel_id,
+                        "since_ms": int((now - last) * 1000),
+                    },
+                )
+                return True
+            self._recent_voice_keys[key] = now
+
+            adapter = self.discord_adapter
+            if getattr(adapter, "voice_broadcast", None):
+                logger.info(
+                    "play_audio_enqueue",
+                    extra={"guild_id": guild_id, "channel_id": channel_id},
+                )
+                return await adapter.enqueue_tts_playback(
+                    guild_id=guild_id,
+                    voice_channel_id=channel_id,
+                    audio_url=audio_url,
+                )
+
+            logger.info(
+                "play_audio_direct",
+                extra={"guild_id": guild_id, "channel_id": channel_id},
+            )
+            return await adapter.play_tts_in_voice_channel(
+                guild_id=guild_id,
+                voice_channel_id=channel_id,
+                audio_url=audio_url,
             )
         except Exception:
             logger.exception("Discord voice playback failed")

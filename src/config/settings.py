@@ -107,7 +107,11 @@ class Settings(BaseSettings):
     # TTS Configuration (Doubao)
     tts_api_key: str | None = Field(None, alias="TTS_API_KEY")
     tts_api_url: str | None = Field(None, alias="TTS_API_URL")
-    tts_voice_id: str = Field("default", alias="TTS_VOICE_ID")
+    tts_app_id: str | None = Field(None, alias="TTS_APP_ID")
+    tts_access_token: str | None = Field(None, alias="TTS_ACCESS_TOKEN")
+    tts_cluster_id: str | None = Field(None, alias="TTS_CLUSTER_ID")
+    tts_user_id: str | None = Field(None, alias="TTS_USER_ID")
+    tts_voice_id: str = Field("zh_female_vv_uranus_bigtts", alias="TTS_VOICE_ID")
     tts_timeout_seconds: int = Field(15, alias="TTS_TIMEOUT_SECONDS")
     tts_upload_timeout_seconds: int = Field(10, alias="TTS_UPLOAD_TIMEOUT_SECONDS")
 
@@ -115,10 +119,26 @@ class Settings(BaseSettings):
     voice_volume_default: float = Field(0.5, alias="VOICE_VOLUME_DEFAULT")
     voice_normalize_default: bool = Field(False, alias="VOICE_NORMALIZE_DEFAULT")
     voice_max_seconds_default: int | None = Field(90, alias="VOICE_MAX_SECONDS_DEFAULT")
+    voice_button_ttl_seconds: int = Field(900, alias="VOICE_BUTTON_TTL_SECONDS")
 
     # Audio Storage Configuration (Local file serving)
     audio_storage_path: str = Field("static/audio", alias="AUDIO_STORAGE_PATH")
     audio_base_url: str = Field("http://localhost:3000/static/audio", alias="AUDIO_BASE_URL")
+    audio_s3_endpoint: str | None = Field(None, alias="AUDIO_S3_ENDPOINT")
+    audio_s3_region: str | None = Field(None, alias="AUDIO_S3_REGION")
+    audio_s3_bucket: str | None = Field(None, alias="AUDIO_S3_BUCKET")
+    audio_s3_access_key: str | None = Field(None, alias="AUDIO_S3_ACCESS_KEY")
+    audio_s3_secret_key: str | None = Field(None, alias="AUDIO_S3_SECRET_KEY")
+    audio_s3_public_base_url: str | None = Field(
+        None,
+        alias="AUDIO_S3_PUBLIC_BASE_URL",
+        description="Optional override for public audio URL base",
+    )
+    audio_s3_path_style: bool = Field(True, alias="AUDIO_S3_PATH_STYLE")
+    build_visual_storage_path: str = Field("static/builds", alias="BUILD_VISUAL_STORAGE_PATH")
+    build_visual_base_url: str = Field(
+        "http://localhost:3000/static/builds", alias="BUILD_VISUAL_BASE_URL"
+    )
 
     # S3/CDN Configuration (for TTS audio delivery)
     aws_access_key_id: str | None = Field(None, alias="AWS_ACCESS_KEY_ID")
@@ -150,6 +170,15 @@ class Settings(BaseSettings):
     feature_voice_streaming_enabled: bool = Field(False, alias="FEATURE_VOICE_STREAMING")
     feature_ai_analysis_enabled: bool = Field(True, alias="FEATURE_AI_ANALYSIS_ENABLED")
     feature_leaderboard_enabled: bool = Field(True, alias="FEATURE_LEADERBOARD_ENABLED")
+    feature_team_build_enrichment_enabled: bool = Field(
+        True, alias="FEATURE_TEAM_BUILD_ENRICH_ENABLED"
+    )
+    feature_opgg_enrichment_enabled: bool = Field(False, alias="FEATURE_OPGG_ENRICH_ENABLED")
+    arena_data_version: str = Field(
+        "15.5",
+        alias="ARENA_DATA_VERSION",
+        description="Pinned Arena data version; must match assets/arena/augments.zh_cn.json",
+    )
     # V2 experiments and feedback UI
     feature_team_analysis_enabled: bool = Field(False, alias="FEATURE_TEAM_ANALYSIS_ENABLED")
     feature_feedback_enabled: bool = Field(True, alias="FEATURE_FEEDBACK_ENABLED")

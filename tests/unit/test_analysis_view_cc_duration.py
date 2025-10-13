@@ -1,6 +1,5 @@
 import discord
 
-import discord
 
 from src.core.views.analysis_view import render_analysis_embed
 
@@ -40,8 +39,10 @@ def _make_analysis_data(
             "game_mode": "SR",
             "is_arena": False,
             "cc_time": cc_time,
+            "cc_per_min": cc_time / max(1.0, 30.0),
             "cc_score": cc_score,
             "level": 14,
+            "sr_enrichment": {"duration_min": 30.0},
         },
     }
     if observability:
@@ -70,16 +71,16 @@ def test_cc_duration_under_minute_shows_seconds():
     embed = render_analysis_embed(_make_analysis_data(42.4, cc_score=12.0))
     snapshot = _extract_snapshot_field(embed)
     assert "控制" in snapshot
-    assert "42.4s" in snapshot
-    assert "12 pts" in snapshot
+    assert "控制时长 42.4s" in snapshot
+    assert "评分 12 pts" in snapshot
 
 
 def test_cc_duration_over_minute_shows_minutes_with_single_decimal():
     embed = render_analysis_embed(_make_analysis_data(424.109, cc_score=180.0))
     snapshot = _extract_snapshot_field(embed)
     assert "控制" in snapshot
-    assert "7.1min" in snapshot
-    assert "180 pts" in snapshot
+    assert "控制时长 7.1min" in snapshot
+    assert "评分 180 pts" in snapshot
 
 
 def test_footer_contains_observability_metrics() -> None:

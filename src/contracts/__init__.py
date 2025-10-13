@@ -9,6 +9,11 @@ from .riot_api import (
     TimelineEvent,
     UserBinding,
 )
+from .events import ChampionKillEvent, EventType
+from .match import MatchInfo, Participant
+from .summoner import LeagueEntry, SummonerProfile
+from .timeline import MatchTimeline, ParticipantFrame
+from .common import Position, Tier
 
 __all__ = [
     "SummonerDTO",
@@ -18,4 +23,14 @@ __all__ = [
     "TimelineEvent",
     "UserBinding",
     "MatchAnalysis",
+    "ChampionKillEvent",
+    "EventType",
+    "MatchInfo",
+    "Participant",
+    "SummonerProfile",
+    "LeagueEntry",
+    "MatchTimeline",
+    "ParticipantFrame",
+    "Position",
+    "Tier",
 ]

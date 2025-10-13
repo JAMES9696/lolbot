@@ -8,7 +8,6 @@ DRY: To avoid duplicate definitions, the payload contract is centralized in
 with existing imports.
 """
 
-
 from pydantic import BaseModel, Field
 
 # Re-export the canonical payload definition to maintain a single source of truth
@@ -60,6 +59,7 @@ EXAMPLE_ANALYSIS_PAYLOAD = {
     "application_id": "123456789012345678",
     "interaction_token": "discord_webhook_token_here",
     "channel_id": "123456789012345678",
+    "guild_id": "987654321098765432",
     "discord_user_id": "123456789012345678",
     "puuid": "a" * 78,
     "match_id": "NA1_1234567890",

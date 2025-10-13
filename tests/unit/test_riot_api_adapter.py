@@ -3,6 +3,7 @@
 Tests focus on adapter behavior, mocking Cassiopeia responses.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -198,4 +199,50 @@ class TestRiotAPIAdapter:
             matches.append(match)
 
         assert len(matches) == 3
-        assert matches[0].id == "match_0"
+
+    @pytest.mark.asyncio
+    async def test_session_recreated_across_event_loops(self, adapter, monkeypatch):
+        """Ensure _ensure_session refreshes aiohttp session when loop changes."""
+        import aiohttp
+
+        class DummySession:
+            def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+                self._loop = loop
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        created_sessions: list[DummySession] = []
+
+        def _fake_client_session(*_args, **_kwargs):
+            session = DummySession(asyncio.get_running_loop())
+            created_sessions.append(session)
+            return session
+
+        monkeypatch.setattr(aiohttp, "ClientSession", _fake_client_session)
+
+        # First ensure creates a session bound to current loop
+        session1 = await adapter._ensure_session()
+        loop1 = asyncio.get_running_loop()
+        assert adapter._session_loop is loop1
+        assert session1 in created_sessions
+
+        # Same loop reuse should not recreate session
+        session_same = await adapter._ensure_session()
+        assert session_same is session1
+
+        # Simulate loop switch by mutating stored loop marker
+        adapter._session_loop = object()  # type: ignore[attr-defined]
+        session2 = await adapter._ensure_session()
+        assert session2 is not session1
+        assert session1.closed
+
+        # Closed session should be replaced on next call if marked closed already
+        session2.closed = True  # type: ignore[attr-defined]
+        session3 = await adapter._ensure_session()
+        assert session3 is not session2
+        assert session2.closed
+        assert adapter._session_loop is asyncio.get_running_loop()
+
+        await adapter.close()

@@ -17,7 +17,7 @@ async def test_llm_debug_wrapper_includes_correlation_id() -> None:
 
     # Configure a temporary processor to capture event dicts
     # Note: capture_logs only captures structlog logs
-    processor = structlog.processors.JSONRenderer()
+    structlog.processors.JSONRenderer()
 
     # Use structlog's testing helper to capture logs
     from structlog.testing import capture_logs

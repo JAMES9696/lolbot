@@ -15,6 +15,7 @@ References:
 """
 
 import pytest
+import copy
 from unittest.mock import Mock, patch
 
 from src.adapters.gemini_llm import GeminiLLMAdapter, GeminiAPIError
@@ -31,6 +32,12 @@ def mock_settings():
         mock.gemini_model = "gemini-1.5-pro"
         mock.gemini_temperature = 0.7
         mock.gemini_max_output_tokens = 2048
+        mock.llm_provider = "gemini"
+        mock.openai_api_base = None
+        mock.openai_api_key = None
+        mock.openai_model = "gpt-4o-mini"
+        mock.chaos_llm_latency_ms = 0
+        mock.chaos_llm_error_rate = 0.0
         yield mock
 
 
@@ -41,7 +48,7 @@ def sample_match_data() -> dict:
     This represents the data contract passed from CLI 2's scoring engine
     to the LLM adapter. Based on src/contracts/analysis_results.py.
     """
-    return {
+    data = {
         "match_id": "NA1_4830294840",
         "player_scores": [
             {
@@ -70,6 +77,12 @@ def sample_match_data() -> dict:
             },
         ],
     }
+    primary = data["player_scores"][0]
+    data["target_player"] = primary.copy()
+    data["target_summoner_name"] = primary["summoner_name"]
+    data["target_champion_name"] = primary["champion_name"]
+    data["target_champion_name_zh"] = "疾风剑豪"
+    return data
 
 
 @pytest.fixture
@@ -104,14 +117,25 @@ def test_adapter_initialization_success(mock_settings):
         # Verify SDK configuration
         mock_configure.assert_called_once_with(api_key="test_api_key_1234567890")
 
-        # Verify model initialization
-        mock_model_class.assert_called_once_with(
-            model_name="gemini-1.5-pro",
-            generation_config={
+        # Verify model initialization for text + JSON models
+        assert mock_model_class.call_count == 2
+        first_call = mock_model_class.call_args_list[0]
+        second_call = mock_model_class.call_args_list[1]
+        assert first_call.kwargs == {
+            "model_name": "gemini-1.5-pro",
+            "generation_config": {
                 "temperature": 0.7,
                 "max_output_tokens": 2048,
             },
-        )
+        }
+        assert second_call.kwargs == {
+            "model_name": "gemini-1.5-pro",
+            "generation_config": {
+                "temperature": 0.7,
+                "max_output_tokens": 2048,
+                "response_mime_type": "application/json",
+            },
+        }
 
         assert adapter.model is not None
 
@@ -120,6 +144,9 @@ def test_adapter_initialization_missing_api_key():
     """Verify adapter raises ValueError when API key is not configured."""
     with patch("src.adapters.gemini_llm.settings") as mock:
         mock.gemini_api_key = None
+        mock.llm_provider = "gemini"
+        mock.openai_api_base = None
+        mock.openai_api_key = None
 
         with pytest.raises(ValueError, match="GEMINI_API_KEY not configured"):
             GeminiLLMAdapter()
@@ -128,30 +155,40 @@ def test_adapter_initialization_missing_api_key():
 # --- Test Cases: Prompt Formatting ---
 
 
-def test_format_prompt_structure(mock_settings, sample_match_data, sample_system_prompt):
-    """Verify _format_prompt correctly combines system prompt with structured data."""
+def test_format_prompt_prefers_llm_context(mock_settings, sample_match_data, sample_system_prompt):
+    """Verify _format_prompt returns sanitized context when provided."""
+    with patch("src.adapters.gemini_llm.genai.configure"), patch(
+        "src.adapters.gemini_llm.genai.GenerativeModel"
+    ):
+        adapter = GeminiLLMAdapter()
+        payload = copy.deepcopy(sample_match_data)
+        override = (
+            "## Target Player Overview\n"
+            "- Summoner: TestPlayer\n\n"
+            "## Appendix (Only consult the appendix if the answer requires extra detail.)\n"
+            "- Match ID: NA1_4830294840"
+        )
+        payload["llm_context"] = override
+
+        formatted_prompt = adapter._format_prompt(sample_system_prompt, payload)
+        assert formatted_prompt == override
+
+
+def test_format_prompt_fallback_structure(mock_settings, sample_match_data, sample_system_prompt):
+    """Verify _format_prompt retains legacy formatting when sanitized context absent."""
     with patch("src.adapters.gemini_llm.genai.configure"), patch(
         "src.adapters.gemini_llm.genai.GenerativeModel"
     ):
         adapter = GeminiLLMAdapter()
         formatted_prompt = adapter._format_prompt(sample_system_prompt, sample_match_data)
 
-        # Verify system prompt is included
-        assert sample_system_prompt in formatted_prompt
-
-        # Verify match metadata is included
+        # Verify fallback prompt includes critical data points
         assert "NA1_4830294840" in formatted_prompt
-        # Note: Format uses markdown bold for Total Players
-        assert "Total Players**: 2" in formatted_prompt or "Total Players: 2" in formatted_prompt
-
-        # Verify player scores are formatted
         assert "TestPlayer" in formatted_prompt
         assert "Yasuo" in formatted_prompt
-        assert "Total 78.5/100" in formatted_prompt
-
-        # Verify raw JSON is included for full context
-        assert "Raw Match Data" in formatted_prompt
-        assert "player_scores" in formatted_prompt
+        assert "- Overall: 78.5" in formatted_prompt
+        assert "Full Data Context" in formatted_prompt
+        assert '"participant_id": 1' in formatted_prompt
 
 
 def test_format_player_scores_empty_list(mock_settings):
@@ -234,8 +271,8 @@ async def test_analyze_match_success(mock_settings, sample_match_data, sample_sy
             # Verify generate_content was called with formatted prompt
             mock_model_instance.generate_content.assert_called_once()
             call_args = mock_model_instance.generate_content.call_args[0][0]
-            assert sample_system_prompt in call_args
             assert "NA1_4830294840" in call_args
+            assert "TestPlayer" in call_args
 
 
 # --- Test Cases: API Error Handling ---
@@ -381,7 +418,7 @@ async def test_analyze_match_contract_compliance(
 
         with patch("asyncio.to_thread", return_value=mock_response):
             narrative = await adapter.analyze_match(sample_match_data, sample_system_prompt)
-            emotion = await adapter.extract_emotion(narrative)
+            await adapter.extract_emotion(narrative)
 
             # Verify we can construct the final report contract
             player = sample_match_data["player_scores"][0]
@@ -399,7 +436,13 @@ async def test_analyze_match_contract_compliance(
                     vision_score=player["vision_control"],
                     objective_score=player["objective_control"],
                     teamplay_score=player["team_contribution"],
+                    growth_score=50.0,
+                    tankiness_score=45.0,
+                    damage_composition_score=55.0,
+                    survivability_score=52.0,
+                    cc_contribution_score=40.0,
                     overall_score=player["total_score"],
+                    raw_stats={"kills": 7, "deaths": 3, "assists": 5},
                 ),
                 champion_assets_url="https://ddragon.leagueoflegends.com/cdn/14.1.1/img/champion/Yasuo.png",
                 processing_duration_ms=1250.0,

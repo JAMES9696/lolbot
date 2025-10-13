@@ -107,11 +107,16 @@ async def test_publish_match_analysis_includes_voice_button(
             assert f"chimera:fb:star:{sample_analysis_report.match_id}" in button_ids
 
             # Verify voice button
-            assert f"chimera:voice:play:{sample_analysis_report.match_id}" in button_ids
+            voice_buttons = [cid for cid in button_ids if cid.startswith("chimera:voice:play:")]
+            assert len(voice_buttons) == 1
+            voice_button_id = voice_buttons[0]
+            parts = voice_button_id.split(":")
+            assert parts[3] == sample_analysis_report.match_id
+            assert len(parts) == 5  # includes issued_at timestamp
 
             # Verify voice button properties
             voice_button = next(
-                btn for btn in action_row["components"] if "voice:play" in btn["custom_id"]
+                btn for btn in action_row["components"] if btn["custom_id"] == voice_button_id
             )
             assert voice_button["type"] == 2  # Button
             assert voice_button["style"] == 1  # Primary

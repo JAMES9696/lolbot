@@ -294,7 +294,7 @@ class TestErrorHandling:
 
             if call_count < 3:
                 await asyncio.sleep(0.1)
-                raise asyncio.TimeoutError("Mock timeout")
+                raise TimeoutError("Mock timeout")
 
             return json.dumps({"narrative": "Success after retries", "emotion_tag": "neutral"})
 
@@ -325,7 +325,7 @@ class TestErrorHandling:
 
         async def always_timeout(prompt: str) -> str:
             await asyncio.sleep(0.1)
-            raise asyncio.TimeoutError("Persistent timeout")
+            raise TimeoutError("Persistent timeout")
 
         adapter = GeminiAdapter()
 

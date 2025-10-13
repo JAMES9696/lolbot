@@ -144,7 +144,11 @@ class MatchTimeline(BaseContract):
         for participant in self.info.participants:
             if participant.puuid == puuid:
                 return participant.participant_id
-        return None
+        try:
+            index = self.metadata.participants.index(puuid)
+            return index + 1
+        except ValueError:
+            return None
 
     def get_events_by_type(self, event_type: str) -> list[dict[str, Any]]:
         """Get all events of a specific type."""

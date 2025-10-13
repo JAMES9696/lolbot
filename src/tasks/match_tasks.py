@@ -77,7 +77,7 @@ def fetch_match_history(
         logger.error(f"[Task {self.request.id}] Error fetching match history for {puuid}: {exc}")
 
         # Retry with exponential backoff
-        raise self.retry(exc=exc, countdown=2**self.request.retries)
+        raise self.retry(exc=exc, countdown=2**self.request.retries) from exc
 
 
 @celery_app.task(
@@ -191,7 +191,7 @@ def fetch_and_store_match(
         logger.error(f"[Task {self.request.id}] Error processing match {match_id}: {exc}")
 
         # Retry with exponential backoff
-        raise self.retry(exc=exc, countdown=2**self.request.retries)
+        raise self.retry(exc=exc, countdown=2**self.request.retries) from exc
 
 
 @celery_app.task(

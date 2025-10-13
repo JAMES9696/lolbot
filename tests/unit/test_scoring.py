@@ -385,6 +385,40 @@ class TestObjectiveControl:
         assert result["epic_monsters"] > 0
         assert result["epic_monster_participation"] == 1.0
 
+    def test_team_conversions_boost_objective_score(self, minimal_timeline: MatchTimeline) -> None:
+        """When队友频繁转换目标时，应给与额外加权而非归零。"""
+        events = [
+            {
+                "type": "CHAMPION_KILL",
+                "timestamp": 100_000,
+                "killerId": 2,
+                "victimId": 6,
+            },
+            {
+                "type": "CHAMPION_KILL",
+                "timestamp": 150_000,
+                "killerId": 3,
+                "victimId": 7,
+            },
+            {
+                "type": "ELITE_MONSTER_KILL",
+                "timestamp": 190_000,
+                "killerId": 2,
+                "monsterType": "DRAGON",
+            },
+        ]
+        minimal_timeline.info.frames[0].events = events
+
+        result = calculate_objective_control(minimal_timeline, 1)
+
+        assert result["epic_monster_participation"] == 0.0
+        assert result["tower_participation"] == 0.0
+        assert result["team_kills_considered"] == 2
+        assert result["team_post_kill_conversions"] == 2
+        assert result["objective_setup"] > 0.0
+        assert result["team_conversion_rate"] == pytest.approx(1.0)
+        assert result["objective_setup"] == pytest.approx(0.32, rel=1e-2)
+
 
 # ============================================================================
 # Vision Control Tests
@@ -486,6 +520,32 @@ class TestTotalScore:
             assert score.emotion_tag == "neutral"
         else:
             assert score.emotion_tag == "concerned"
+
+    def test_cc_fallback_uses_match_details(self, minimal_timeline: MatchTimeline) -> None:
+        """When timeline lacks CC metrics, match details should recover the score."""
+        # Force timeline frame to report zero CC so fallback path is exercised.
+        frame = minimal_timeline.info.frames[-1]
+        frame.participant_frames["1"].time_enemy_spent_controlled = 0
+
+        participant_data = {
+            "participantId": 1,
+            "timeCCingOthers": 732,  # seconds (~12.2 min)
+            "totalTimeCCDealt": 740,
+            "timePlayed": 1445,  # seconds (~24.1 min)
+            "challenges": {"crowdControlScore": 512.3},
+        }
+
+        score = calculate_total_score(
+            minimal_timeline,
+            1,
+            participant_data=participant_data,
+        )
+
+        assert score.cc_contribution_score >= 90.0
+        assert isinstance(score.raw_stats, dict)
+        assert score.raw_stats.get("cc_time") == pytest.approx(732, rel=0.01)
+        assert score.raw_stats.get("cc_per_min") == pytest.approx(732 / (1445 / 60), rel=0.01)
+        assert score.raw_stats.get("cc_score") == pytest.approx(512.3, rel=0.01)
 
 
 # ============================================================================

@@ -78,7 +78,7 @@ def build_team_receipt(report: Any) -> str:
                 0.0,
             )
             rows.append(
-                f"{label.ljust(8,'.')} {_fmt(val)}  {_bar20(float(val))}  (avg {_fmt(avg)})"
+                f"{label.ljust(8, '.')} {_fmt(val)}  {_bar20(float(val))}  (avg {_fmt(avg)})"
             )
 
     out = [title, line, sub, line]

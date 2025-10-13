@@ -127,6 +127,33 @@ def test_match_timeline() -> None:
     assert timeline.get_participant_by_puuid("unknown") is None
 
 
+def test_match_timeline_metadata_fallback_for_participant_lookup() -> None:
+    """即使 info.participants 缺失，也应通过 metadata 映射 participantId。"""
+    timeline_data = {
+        "metadata": {
+            "data_version": "2",
+            "match_id": "NA1_FALLBACK_321",
+            "participants": ["pA", "pB", "pC"],
+        },
+        "info": {
+            "frame_interval": 60000,
+            "game_id": 987654321,
+            "participants": [],
+            "frames": [
+                {
+                    "timestamp": 0,
+                    "participant_frames": {},
+                    "events": [],
+                }
+            ],
+        },
+    }
+
+    timeline = MatchTimeline(**timeline_data)
+    assert timeline.get_participant_by_puuid("pB") == 2
+    assert timeline.get_participant_by_puuid("missing") is None
+
+
 def test_summoner_profile() -> None:
     """Test SummonerProfile model."""
     summoner_data = {
@@ -273,7 +300,7 @@ def test_type_validation() -> None:
     # Out of range participant_id
     with pytest.raises(ValidationError):
         ParticipantFrame(
-            participant_id=11,  # Max is 10
+            participant_id=17,  # Max is 16 (supports Arena teams)
             champion_stats={},
             damage_stats={},
             position={"x": 0, "y": 0},

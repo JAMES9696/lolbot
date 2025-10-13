@@ -142,6 +142,38 @@ class TestDatabaseAdapter:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_list_user_bindings_returns_rows(self, adapter, mock_pool):
+        """List all user bindings ordered by latest update."""
+        adapter._pool = mock_pool
+        mock_conn = AsyncMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        mock_rows = [
+            {
+                "discord_id": "123",
+                "puuid": "puuid_123",
+                "summoner_name": "Tester#NA1",
+                "region": "na1",
+                "updated_at": datetime.now(UTC),
+            }
+        ]
+        mock_conn.fetch.return_value = mock_rows
+
+        rows = await adapter.list_user_bindings()
+
+        assert rows == mock_rows
+        mock_conn.fetch.assert_called_once()
+        executed_sql = mock_conn.fetch.call_args.args[0]
+        assert "FROM user_bindings" in executed_sql
+        assert "ORDER BY updated_at DESC" in executed_sql
+
+    @pytest.mark.asyncio
+    async def test_list_user_bindings_without_pool(self, adapter):
+        """Return empty list when connection pool is unavailable."""
+        rows = await adapter.list_user_bindings()
+        assert rows == []
+
+    @pytest.mark.asyncio
     async def test_save_match_data_success(self, adapter, mock_pool):
         """Test successful match data save."""
         adapter._pool = mock_pool

@@ -124,7 +124,7 @@ class ARAMStrategy(AnalysisStrategy):
             try:
                 payload = json.loads(llm_json)
             except json.JSONDecodeError as e:  # pragma: no cover - defensive
-                raise ValueError(f"LLM returned invalid JSON: {e}")
+                raise ValueError(f"LLM returned invalid JSON: {e}") from e
 
             # 4) Hallucination detection (detect LLM claiming data is missing)
             analysis_summary = payload.get("analysis_summary", "")

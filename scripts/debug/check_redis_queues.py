@@ -4,11 +4,13 @@ import asyncio
 import sys
 from src.adapters.redis_adapter import RedisAdapter
 from src.config.settings import Settings
+import contextlib
+import builtins
 
 
 async def check_redis_queues():
     """Check Redis queues for pending tasks."""
-    settings = Settings()
+    Settings()
     redis = RedisAdapter()
 
     try:
@@ -68,10 +70,8 @@ async def check_redis_queues():
         import traceback
 
         traceback.print_exc()
-        try:
+        with contextlib.suppress(builtins.BaseException):
             await redis.disconnect()
-        except:
-            pass
         return False
 
 

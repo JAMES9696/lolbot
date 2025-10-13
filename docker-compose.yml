@@ -102,6 +102,216 @@ services:
     profiles:
       - dev
 
+  # Discord Bot - Main application service
+  discord-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chimera-discord-bot
+    restart: unless-stopped
+    environment:
+      # Override connection URLs to use Docker service names
+      DATABASE_URL: postgresql://chimera_user:chimera_secure_password_2024@postgres:5432/chimera_db
+      REDIS_URL: redis://:chimera_redis_password_2024@redis:6379
+      # API Keys and tokens from host environment
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID}
+      DISCORD_PUBLIC_KEY: ${DISCORD_PUBLIC_KEY}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      RIOT_API_KEY: ${RIOT_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Database configuration
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-20}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-40}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-30}
+      # Redis configuration
+      REDIS_CACHE_TTL: ${REDIS_CACHE_TTL:-3600}
+      REDIS_MATCH_CACHE_TTL: ${REDIS_MATCH_CACHE_TTL:-86400}
+      # Celery configuration
+      CELERY_BROKER_URL: redis://:chimera_redis_password_2024@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:chimera_redis_password_2024@redis:6379/1
+      # LLM Configuration
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_BASE: ${OPENAI_API_BASE}
+      OPENAI_MODEL: ${OPENAI_MODEL:-claude-sonnet-4-5-20250929}
+      OPENAI_TEMPERATURE: ${OPENAI_TEMPERATURE:-1.0}
+      OPENAI_MAX_TOKENS: ${OPENAI_MAX_TOKENS:-2048}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-pro}
+      LLM_CACHE_ENABLED: ${LLM_CACHE_ENABLED:-false}
+      ANALYSIS_CACHE_ENABLED: ${ANALYSIS_CACHE_ENABLED:-false}
+      # Security configuration
+      SECURITY_RSO_CLIENT_ID: ${SECURITY_RSO_CLIENT_ID}
+      SECURITY_RSO_CLIENT_SECRET: ${SECURITY_RSO_CLIENT_SECRET}
+      SECURITY_RSO_REDIRECT_URI: ${SECURITY_RSO_REDIRECT_URI:-http://localhost:3000/callback}
+      MOCK_RSO_ENABLED: ${MOCK_RSO_ENABLED:-true}
+      # TTS configuration
+      TTS_API_KEY: ${TTS_API_KEY}
+      TTS_API_URL: ${TTS_API_URL}
+      TTS_VOICE_ID: ${TTS_VOICE_ID:-zh_male_beijingxiaoye_emo_v2_mars_bigtts}
+      # ============================================================================
+      # Voice & TTS Feature Flags
+      # ============================================================================
+      FEATURE_VOICE_ENABLED: ${FEATURE_VOICE_ENABLED:-true}
+      FEATURE_VOICE_STREAMING_ENABLED: ${FEATURE_VOICE_STREAMING_ENABLED:-true}
+      FEATURE_TEAM_AUTO_TTS_ENABLED: ${FEATURE_TEAM_AUTO_TTS_ENABLED:-false}
+      # Audio Storage - Local file serving (preferred for development)
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-static/audio}
+      AUDIO_BASE_URL: ${AUDIO_BASE_URL:-http://localhost:3000/static/audio}
+      AUDIO_FILE_TTL_SECONDS: ${AUDIO_FILE_TTL_SECONDS:-604800}
+      # AWS S3 for TTS audio storage (optional, for production)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_REGION: ${AWS_S3_REGION:-us-east-1}
+      CDN_BASE_URL: ${CDN_BASE_URL:-}
+      # Voice broadcast configuration
+      BROADCAST_SERVER_URL: ${BROADCAST_SERVER_URL:-http://localhost:3000}
+      BROADCAST_WEBHOOK_SECRET: ${BROADCAST_WEBHOOK_SECRET}
+      # Alerting
+      ALERTS_DISCORD_WEBHOOK: ${ALERTS_DISCORD_WEBHOOK}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET}
+    ports:
+      - "3000:3000"  # RSO callback server
+    volumes:
+      - ./logs:/app/logs
+      - ./static:/app/static
+      - ./ddragon_cache:/app/ddragon_cache
+      - ./opgg_cache:/app/opgg_cache
+      - ./.prom_multiproc:/app/.prom_multiproc
+    networks:
+      - chimera_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python main.py
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Celery Worker - Async task processing
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chimera-celery-worker
+    restart: unless-stopped
+    environment:
+      # Override connection URLs to use Docker service names
+      DATABASE_URL: postgresql://chimera_user:chimera_secure_password_2024@postgres:5432/chimera_db
+      REDIS_URL: redis://:chimera_redis_password_2024@redis:6379
+      CELERY_BROKER_URL: redis://:chimera_redis_password_2024@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:chimera_redis_password_2024@redis:6379/1
+      # API Keys and tokens from host environment
+      RIOT_API_KEY: ${RIOT_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_APPLICATION_ID: ${DISCORD_APPLICATION_ID}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      # Database configuration
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-20}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-40}
+      DATABASE_POOL_TIMEOUT: ${DATABASE_POOL_TIMEOUT:-30}
+      # Redis configuration
+      REDIS_CACHE_TTL: ${REDIS_CACHE_TTL:-3600}
+      REDIS_MATCH_CACHE_TTL: ${REDIS_MATCH_CACHE_TTL:-86400}
+      # LLM Configuration
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_BASE: ${OPENAI_API_BASE}
+      OPENAI_MODEL: ${OPENAI_MODEL:-claude-sonnet-4-5-20250929}
+      OPENAI_TEMPERATURE: ${OPENAI_TEMPERATURE:-1.0}
+      OPENAI_MAX_TOKENS: ${OPENAI_MAX_TOKENS:-2048}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-pro}
+      LLM_CACHE_ENABLED: ${LLM_CACHE_ENABLED:-false}
+      ANALYSIS_CACHE_ENABLED: ${ANALYSIS_CACHE_ENABLED:-false}
+      # Celery worker configuration
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-4}
+      CELERY_TASK_SERIALIZER: ${CELERY_TASK_SERIALIZER:-json}
+      CELERY_RESULT_SERIALIZER: ${CELERY_RESULT_SERIALIZER:-json}
+      CELERY_ACCEPT_CONTENT: ${CELERY_ACCEPT_CONTENT:-json}
+      # Worker-specific settings
+      WORKER_NAME: chimera_worker
+      WORKER_CONCURRENCY: 4
+      WORKER_LOGLEVEL: info
+      WORKER_QUEUE: matches,ai,default
+      PROMETHEUS_MULTIPROC_DIR: /app/.prom_multiproc
+      # TTS configuration (needed for voice analysis tasks)
+      TTS_API_KEY: ${TTS_API_KEY}
+      TTS_API_URL: ${TTS_API_URL}
+      TTS_VOICE_ID: ${TTS_VOICE_ID:-zh_male_beijingxiaoye_emo_v2_mars_bigtts}
+      # ============================================================================
+      # Voice & TTS Feature Flags (Worker)
+      # ============================================================================
+      FEATURE_VOICE_ENABLED: ${FEATURE_VOICE_ENABLED:-true}
+      FEATURE_VOICE_STREAMING_ENABLED: ${FEATURE_VOICE_STREAMING_ENABLED:-true}
+      FEATURE_TEAM_AUTO_TTS_ENABLED: ${FEATURE_TEAM_AUTO_TTS_ENABLED:-false}
+      # Audio Storage - Local file serving (worker needs this for synthesis tasks)
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-static/audio}
+      AUDIO_BASE_URL: ${AUDIO_BASE_URL:-http://discord-bot:3000/static/audio}
+      AUDIO_FILE_TTL_SECONDS: ${AUDIO_FILE_TTL_SECONDS:-604800}
+      # AWS S3 for TTS audio storage (optional, for production)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_S3_REGION: ${AWS_S3_REGION:-us-east-1}
+      CDN_BASE_URL: ${CDN_BASE_URL:-}
+      # Voice broadcast configuration
+      BROADCAST_SERVER_URL: ${BROADCAST_SERVER_URL:-http://discord-bot:3000}
+      BROADCAST_WEBHOOK_SECRET: ${BROADCAST_WEBHOOK_SECRET}
+      # Alerting
+      ALERTS_DISCORD_WEBHOOK: ${ALERTS_DISCORD_WEBHOOK}
+      ALERT_WEBHOOK_SECRET: ${ALERT_WEBHOOK_SECRET}
+    volumes:
+      - ./logs:/app/logs
+      - ./.prom_multiproc:/app/.prom_multiproc
+      - ./static:/app/static
+      - ./ddragon_cache:/app/ddragon_cache
+      - ./opgg_cache:/app/opgg_cache
+    networks:
+      - chimera_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A src.tasks.celery_app.celery_app worker
+      --loglevel=info
+      --concurrency=4
+      --hostname=chimera_worker@%h
+      --queues=matches,ai,default
+      --max-tasks-per-child=1000
+      --time-limit=300
+      --soft-time-limit=240
+      --autoscale=10,3
+      --without-gossip
+      --without-mingle
+      --without-heartbeat
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A src.tasks.celery_app.celery_app inspect ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 networks:
   chimera_network:
     driver: bridge

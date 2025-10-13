@@ -17,7 +17,6 @@ Env:
 
 import argparse
 import asyncio
-from typing import Optional
 
 import asyncpg
 
@@ -50,7 +49,7 @@ async def main(mode: str, yes: bool) -> None:
 
     settings = get_settings()
     url = settings.database_url
-    pool: Optional[asyncpg.Pool] = None
+    pool: asyncpg.Pool | None = None
     try:
         pool = await asyncpg.create_pool(dsn=url, min_size=1, max_size=2)
         async with pool.acquire() as conn:

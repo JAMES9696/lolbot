@@ -150,7 +150,7 @@ class UserSettingsModal(discord.ui.Modal, title="⚙️ 个性化设置"):
         ]
 
         if not any(field is not None for field in provided_fields):
-            return "请至少填写一个配置项。\n" "留空的字段将保持原有设置不变。"
+            return "请至少填写一个配置项。\n留空的字段将保持原有设置不变。"
 
         # All validations passed
         return None

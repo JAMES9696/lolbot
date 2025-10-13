@@ -52,6 +52,11 @@ class MonsterType(str, Enum):
     DRAGON = "DRAGON"
     BARON_NASHOR = "BARON_NASHOR"
     RIFTHERALD = "RIFTHERALD"
+    HORDE = "HORDE"  # S14 Voidgrubs
+    VOIDGRUB = "VOIDGRUB"  # Alternative name
+    ATAKHAN = "ATAKHAN"  # S15 Atakhan (generic)
+    RUINOUS_ATAKHAN = "RUINOUS_ATAKHAN"  # S15 Atakhan variant
+    VORACIOUS_ATAKHAN = "VORACIOUS_ATAKHAN"  # S15 Atakhan variant
 
 
 class MonsterSubType(str, Enum):

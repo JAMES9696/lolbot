@@ -85,7 +85,7 @@ class V21WeakDimension(BaseModel):
 
     gap_from_avg: float = Field(
         description=(
-            "Percentage point difference from team average. " "Negative indicates underperformance."
+            "Percentage point difference from team average. Negative indicates underperformance."
         )
     )
 
@@ -393,9 +393,7 @@ EXAMPLE_V21_OUTPUT = V21PrescriptiveAnalysisReport(
         V21ImprovementSuggestion(
             suggestion_id="Vision_1456000",
             dimension="Vision",
-            issue_identified=(
-                "视野控制弱于队友（评分62.4，队伍排名第4），" "导致24:16大龙被敌方偷取"
-            ),
+            issue_identified=("视野控制弱于队友（评分62.4，队伍排名第4），导致24:16大龙被敌方偷取"),
             evidence_timestamp="24:16",
             action_item=(
                 "在大龙刷新前60秒（游戏时间20分钟后），"

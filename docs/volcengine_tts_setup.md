@@ -16,7 +16,9 @@
   - HTTP 同步（示例）：`https://openspeech.bytedance.com/api/v1/tts`
   - WebSocket 流式（示例）：`wss://openspeech.bytedance.com/api/v1/tts/ws`
 - `TTS_API_KEY`：从火山引擎控制台获取的 API Key（放入请求头）
-- `TTS_VOICE_ID`：发音人/音色标识（如官方文档中的示例 ID）
+- `TTS_APP_ID` / `TTS_ACCESS_TOKEN` / `TTS_CLUSTER_ID`：可选字段，对应控制台应用的 appid/token/cluster
+- `TTS_USER_ID`：可选字段，未配置时默认使用 `chimera_bot`
+- `TTS_VOICE_ID`：发音人/音色标识（如官方文档中的示例 ID；默认 `zh_female_vv_uranus_bigtts`）
 - `FEATURE_VOICE_ENABLED`：设为 `true` 以在应用层启用语音能力（代码集成进度视具体模块而定）
 
 > 说明：本项目当前未直接使用 AK/SK + 签名的鉴权方式，统一采用 API Key 头部鉴权；如后续需要 SigV4 鉴权，再扩展对应配置。
@@ -27,7 +29,11 @@
 ```
 TTS_API_URL=https://openspeech.bytedance.com/api/v1/tts
 TTS_API_KEY=ve-xxxxxxxxxxxxxxxxxxxxxxxx
-TTS_VOICE_ID=doubao_xxx
+TTS_APP_ID=your_volc_app_id
+TTS_ACCESS_TOKEN=your_volc_access_token
+TTS_CLUSTER_ID=volcano_tts
+TTS_USER_ID=chimera_bot
+TTS_VOICE_ID=zh_female_vv_uranus_bigtts
 FEATURE_VOICE_ENABLED=true
 ```
 

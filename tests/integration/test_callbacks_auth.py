@@ -34,11 +34,10 @@ async def test_alerts_auth_unauthorized(monkeypatch) -> None:
         # Act: no header/query token → 401
         import aiohttp
 
-        async with aiohttp.ClientSession() as s:
-            async with s.post(
-                f"http://127.0.0.1:{port}/alerts", json={"status": "firing", "alerts": []}
-            ) as resp:
-                assert resp.status == 401
+        async with aiohttp.ClientSession() as s, s.post(
+            f"http://127.0.0.1:{port}/alerts", json={"status": "firing", "alerts": []}
+        ) as resp:
+            assert resp.status == 401
     finally:
         await runner.cleanup()
 

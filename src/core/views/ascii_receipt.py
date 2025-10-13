@@ -86,8 +86,8 @@ def build_ascii_receipt(report: Any) -> str:
     sub = f"{champ or '-'} · {name or '-'}"[:54]
 
     # Items
-    items: list[str] = [f"{k.ljust(10,'.')} {_fmt1(s)}  {_bar20(s)}" for k, s in dims[:3]] + [
-        f"{k.ljust(10,'.')} {_fmt1(s)}  {_bar20(s)}" for k, s in dims[3:6]
+    items: list[str] = [f"{k.ljust(10, '.')} {_fmt1(s)}  {_bar20(s)}" for k, s in dims[:3]] + [
+        f"{k.ljust(10, '.')} {_fmt1(s)}  {_bar20(s)}" for k, s in dims[3:6]
     ]
 
     # Totals / highlights

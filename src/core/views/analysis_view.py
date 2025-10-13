@@ -12,6 +12,7 @@ import discord
 from src.core.utils.clamp import clamp_code_block, clamp_field, clamp_text
 from src.core.views.ascii_card import build_ascii_card
 from src.core.views.emoji_registry import resolve_emoji
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -500,9 +501,14 @@ def render_analysis_embed(analysis_data: dict[str, Any]) -> discord.Embed:
             ("等级", str(level_val)),
             ("控制", control_value),
         ]
-        label_width = 8
-        snapshot_lines = [f"{label:<{label_width}}{value}" for label, value in snapshot_entries]
-        snapshot_block = "```text\n" + "\n".join(snapshot_lines) + "\n```"
+
+        # Build bordered box with Unicode characters
+        snapshot_lines = ["┌─────────────────────────────────────┐"]
+        for label, value in snapshot_entries:
+            line = f"│ {label:<8} {value:<24} │"
+            snapshot_lines.append(line)
+        snapshot_lines.append("└─────────────────────────────────────┘")
+        snapshot_block = "```\n" + "\n".join(snapshot_lines) + "\n```"
 
     embed.add_field(
         name=_title("🧠 个人快照"),
@@ -510,12 +516,10 @@ def render_analysis_embed(analysis_data: dict[str, Any]) -> discord.Embed:
         inline=False,
     )
 
-    # Author & thumbnail
-    try:
+    # Author & thumbnail (thumbnail removed to improve layout)
+    with contextlib.suppress(Exception):
         embed.set_author(name=f"{summoner_name} · {champion_name}", icon_url=champion_url)
-    except Exception:
-        pass
-    embed.set_thumbnail(url=champion_url)
+    # embed.set_thumbnail(url=champion_url)  # Removed: affects column layout
 
     observability = raw_stats.get("observability") if isinstance(raw_stats, dict) else None
     task_id = analysis_data.get("trace_task_id")
@@ -576,160 +580,3 @@ def render_error_embed(
     )
     embed.set_footer(text="蔚-上城人 | 错误通知")
     return embed
-    # === 统一字段：核心优势、重点补强、时间线增强、个人快照 ===
-    dimension_map: list[tuple[str, str, str, Any]] = [
-        ("combat_score", "⚔️", "战斗效率", v1_scores.get("combat_score")),
-        ("economy_score", "💰", "经济管理", v1_scores.get("economy_score")),
-        ("objective_score", "🎯", "目标控制", v1_scores.get("objective_score")),
-        ("vision_score", "👁️", "视野控制", v1_scores.get("vision_score")),
-        ("teamplay_score", "🤝", "团队协同", v1_scores.get("teamplay_score")),
-        ("growth_score", "📊", "成长", v1_scores.get("growth_score")),
-        ("tankiness_score", "🛡️", "坦度", v1_scores.get("tankiness_score")),
-        ("damage_composition_score", "⚡", "伤害", v1_scores.get("damage_composition_score")),
-        ("survivability_score", "💚", "生存能力", v1_scores.get("survivability_score")),
-        ("cc_contribution_score", "🎯", "控制", v1_scores.get("cc_contribution_score")),
-    ]
-
-    ascii_safe = str(os.getenv("UI_ASCII_SAFE", os.getenv("CHIMERA_ASCII_SAFE", "0"))).lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-
-    def _title(label: str) -> str:
-        if not ascii_safe:
-            return label
-        return label.split(" ", 1)[1] if " " in label else label
-
-    def _format_dim_line(emoji: str, label: str, score_value: float) -> str:
-        bar = _progress_bar(score_value, ascii_safe=ascii_safe)
-        prefix = "" if ascii_safe else f"{emoji} "
-        return f"{prefix}{label}: {bar} {score_value:.1f}分"
-
-    dimension_candidates: list[tuple[str, str, str, float]] = []
-    for key, emoji, label, raw_value in dimension_map:
-        try:
-            numeric = float(raw_value if raw_value is not None else 0.0)
-        except (TypeError, ValueError):
-            numeric = 0.0
-        dimension_candidates.append((key, emoji, label, numeric))
-    dimension_candidates.sort(key=lambda item: item[3], reverse=True)
-
-    top3 = dimension_candidates[:3]
-    bottom3 = dimension_candidates[-3:] if len(dimension_candidates) >= 3 else dimension_candidates
-
-    def _render_dimension_section(items: list[tuple[str, str, str, float]]) -> str:
-        if not items:
-            return "暂无评分数据"
-        return "\n".join(_format_dim_line(emoji, label, score) for _, emoji, label, score in items)
-
-    embed.add_field(
-        name=_title("⚡ 核心优势"),
-        value=clamp_field(_render_dimension_section(top3)),
-        inline=False,
-    )
-    embed.add_field(
-        name=_title("⚠️ 重点补强"),
-        value=clamp_field(_render_dimension_section(bottom3)),
-        inline=False,
-    )
-
-    sr_enrichment = raw_stats.get("sr_enrichment") if isinstance(raw_stats, dict) else None
-    is_summoners_rift = not (is_arena or is_aram)
-    timeline_text = "暂无时间线增强数据"
-    if is_summoners_rift and isinstance(sr_enrichment, dict) and sr_enrichment:
-        parts: list[str] = []
-
-        def _fmt_delta(value: Any) -> str:
-            try:
-                return f"{int(round(float(value))):+d}"
-            except (TypeError, ValueError):
-                return "+0"
-
-        if sr_enrichment.get("gold_diff_10") is not None:
-            parts.append(f"GoldΔ10 {_fmt_delta(sr_enrichment.get('gold_diff_10'))}")
-        if sr_enrichment.get("xp_diff_10") is not None:
-            parts.append(f"XPΔ10 {_fmt_delta(sr_enrichment.get('xp_diff_10'))}")
-        if sr_enrichment.get("conversion_rate") is not None:
-            try:
-                conv_pct = int(round(float(sr_enrichment["conversion_rate"]) * 100))
-            except (TypeError, ValueError):
-                conv_pct = 0
-            parts.append(f"转化率 {conv_pct}%")
-        if sr_enrichment.get("ward_rate_per_min") is not None:
-            try:
-                ward_rate = float(sr_enrichment["ward_rate_per_min"])
-                parts.append(f"插眼/分 {ward_rate:.2f}")
-            except (TypeError, ValueError):
-                parts.append("插眼/分 —")
-
-        if parts:
-            timeline_text = " • ".join(parts)
-
-    embed.add_field(
-        name=_title("🕒 时间线增强"),
-        value=clamp_field(timeline_text),
-        inline=False,
-    )
-
-    snapshot_block = "```\n数据不可用\n```"
-    if isinstance(raw_stats, dict) and raw_stats:
-        kills = int(raw_stats.get("kills", 0) or 0)
-        deaths = int(raw_stats.get("deaths", 0) or 0)
-        assists = int(raw_stats.get("assists", 0) or 0)
-        cs_total = int(raw_stats.get("cs", raw_stats.get("total_cs", 0)) or 0)
-
-        cs_per_min: float | None
-        try:
-            cs_per_min_raw = raw_stats.get("cs_per_min")
-            cs_per_min = float(cs_per_min_raw) if cs_per_min_raw is not None else None
-        except (TypeError, ValueError):
-            cs_per_min = None
-        if cs_per_min is None:
-            duration_min = None
-            if isinstance(sr_enrichment, dict):
-                duration_min = sr_enrichment.get("duration_min")
-            if duration_min:
-                try:
-                    cs_per_min = cs_total / max(1.0, float(duration_min))
-                except (TypeError, ValueError):
-                    cs_per_min = None
-        cs_value_text = str(cs_total) if cs_per_min is None else f"{cs_total} ({cs_per_min:.1f})"
-
-        vision_score = int(raw_stats.get("vision_score", 0) or 0)
-        damage_dealt = int(round(float(raw_stats.get("damage_dealt", 0) or 0.0)))
-        damage_taken = int(round(float(raw_stats.get("damage_taken", 0) or 0.0)))
-        level_val = int(raw_stats.get("level", 0) or 0)
-
-        cc_time_val = float(raw_stats.get("cc_time", 0.0) or 0.0)
-        cc_score_raw = raw_stats.get("cc_score", 0.0) or 0.0
-        try:
-            cc_score_int = int(round(float(cc_score_raw)))
-        except (TypeError, ValueError):
-            cc_score_int = 0
-
-        control_segments: list[str] = []
-        if cc_time_val:
-            control_segments.append(_format_cc_duration(cc_time_val))
-        if cc_score_int:
-            control_segments.append(f"{cc_score_int} pts")
-        control_value = " / ".join(control_segments) if control_segments else "—"
-
-        snapshot_entries = [
-            ("K/D/A", f"{kills} / {deaths} / {assists}"),
-            ("CS/分", cs_value_text),
-            ("视野", str(vision_score)),
-            ("输出/承伤", f"{damage_dealt:,} / {damage_taken:,}"),
-            ("等级", str(level_val)),
-            ("控制", control_value),
-        ]
-        label_width = 8
-        snapshot_lines = [f"{label:<{label_width}}{value}" for label, value in snapshot_entries]
-        snapshot_block = "```text\n" + "\n".join(snapshot_lines) + "\n```"
-
-    embed.add_field(
-        name=_title("🧠 个人快照"),
-        value=clamp_code_block(snapshot_block),
-        inline=False,
-    )

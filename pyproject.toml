@@ -44,6 +44,7 @@ matplotlib = "^3.8.0"
 seaborn = "^0.13.0"
 plotly = "^5.18.0"
 httpx = "^0.26.0"  # For API testing
+Pillow = "^10.4.0"
 
 # Async Support
 asyncio = "^3.4.3"
@@ -73,6 +74,8 @@ watchdog = "^3.0.0"  # For hot reloading
 python-json-logger = "^2.0.7"  # Structured logging
 rich = "^13.7.0"  # Beautiful terminal output
 prometheus-client = "^0.20.0"
+types-aioboto3 = "^15.2.0"
+numpy = "^2.3.3"
 
 [build-system]
 requires = ["poetry-core"]
@@ -80,6 +83,13 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
 line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "notebooks/v2.1_prescriptive_analysis.ipynb",  # Corrupted JSON
+    "notebooks/v2_ab_test_analysis.ipynb",  # Python 3.12 f-string syntax
+]
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -93,10 +103,20 @@ ignore = [
     "E501",  # line too long (handled by black)
     "B008",  # do not perform function calls in argument defaults
 ]
-target-version = "py311"
 
-[tool.ruff.per-file-ignores]
-"tests/*" = ["S101"]  # allow assert in tests
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "E402", "SIM117"]  # allow assert, late imports, and nested with in tests
+"scripts/*" = ["E402", "E722", "SIM117"]  # allow late imports, bare except, and nested with in scripts
+"notebooks/*" = ["E402", "B007"]  # allow late imports and unused loop variables in notebooks
+# E402: Module imports not at top - intentional to avoid circular imports
+"src/contracts/v23_multi_mode_analysis.py" = ["E402"]
+"src/core/views/ascii_card.py" = ["E402"]
+"src/tasks/team_tasks.py" = ["E402", "SIM117"]
+# SIM117: Nested with statements - intentional for resource management (connection pools, transactions, HTTP sessions)
+"src/adapters/database.py" = ["SIM117"]
+"src/adapters/gemini_adapter.py" = ["E402"]
+"src/adapters/discord_adapter.py" = ["SIM117"]
+"src/api/rso_callback.py" = ["SIM117"]
 
 [tool.mypy]
 python_version = "3.11"

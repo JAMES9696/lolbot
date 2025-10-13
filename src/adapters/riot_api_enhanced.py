@@ -576,12 +576,10 @@ class RiotAPIEnhancedAdapter(RiotAPIPort):
         limit: int,  # Cassiopeia MatchHistory (untyped)
     ) -> AsyncIterator[Any]:  # Cassiopeia Match (untyped)
         """Async generator for match history with rate limit awareness."""
-        count = 0
-        for match in match_history:
+        for count, match in enumerate(match_history):
             if count >= limit:
                 break
             yield match
-            count += 1
             # Small delay to be nice to the API
             await asyncio.sleep(0.05)  # Reduced delay for production
 

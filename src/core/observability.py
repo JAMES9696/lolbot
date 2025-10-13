@@ -18,6 +18,7 @@ from typing import Any, TypeVar, cast
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 from structlog.contextvars import bind_contextvars, merge_contextvars, unbind_contextvars
+import contextlib
 
 # Configure structured logging
 structlog.configure(
@@ -429,18 +430,14 @@ def set_correlation_id(correlation_id: str) -> None:
 
     Downstream llm_debug_wrapper logs will automatically include it.
     """
-    try:
+    with contextlib.suppress(Exception):
         bind_contextvars(correlation_id=correlation_id)
-    except Exception:
-        pass
 
 
 def clear_correlation_id() -> None:
     """Remove correlation_id from the structured log context."""
-    try:
+    with contextlib.suppress(Exception):
         unbind_contextvars("correlation_id")
-    except Exception:
-        pass
 
 
 def configure_stdlib_json_logging(level: str = "INFO", file_target: str | None = None) -> None:

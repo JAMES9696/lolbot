@@ -15,12 +15,22 @@ All I/O operations belong in adapters layer.
 """
 
 import logging
+from collections import defaultdict
 from typing import Any
 
 import numpy as np
 
 from src.contracts.timeline import MatchTimeline
 from src.core.scoring.models import MatchAnalysisOutput, PlayerScore
+
+logger = logging.getLogger(__name__)
+
+_CONVERSION_LOOKAHEAD_MS = 120_000
+_PERSONAL_OBJECTIVE_WEIGHT = 0.6
+_TEAM_CONVERSION_WEIGHT = 0.4
+_CONVERSION_RATE_WEIGHT = 0.7
+_CONVERSION_VOLUME_WEIGHT = 0.3
+_CONVERSION_VOLUME_NORMALIZER = 6.0
 
 
 def calculate_combat_efficiency(timeline: MatchTimeline, participant_id: int) -> dict[str, float]:
@@ -164,15 +174,53 @@ def calculate_objective_control(timeline: MatchTimeline, participant_id: int) ->
         Dict with normalized scores for:
         - epic_monster_participation: Dragon/Baron/Herald participation
         - tower_participation: Tower/Building destruction participation
-        - objective_setup: Combined objective control quality
+        - objective_setup: Combined objective control quality (personal + team conversions)
     """
     epic_monsters = 0
     tower_kills = 0
     total_epic_monsters = 0
     total_towers = 0
+    team_kills = 0
+    team_conversions = 0
 
     team_id = 100 if participant_id <= 5 else 200
     team_participant_ids = list(range(1, 6)) if team_id == 100 else list(range(6, 11))
+    conversion_events: list[dict[str, Any]] = []
+
+    def _event_timestamp(ev: dict[str, Any]) -> int:
+        """Best-effort timestamp extraction with graceful fallback."""
+        ts = ev.get("timestamp")
+        if ts is None:
+            ts = ev.get("realTimestamp")
+        try:
+            return int(ts) if ts is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _conversion_bucket(ev: dict[str, Any]) -> str | None:
+        """Map objective events to canonical bucket names."""
+        et = ev.get("type")
+        if et == "BUILDING_KILL":
+            building_type = str(ev.get("buildingType", ""))
+            if building_type == "TOWER_BUILDING":
+                return "towers"
+            if building_type == "INHIBITOR_BUILDING":
+                return "inhibitors"
+        elif et == "ELITE_MONSTER_KILL":
+            monster_type = str(ev.get("monsterType", ""))
+            if monster_type == "DRAGON":
+                return "drakes"
+            if monster_type == "BARON_NASHOR":
+                return "barons"
+            if monster_type in ("RIFTHERALD", "HORDE_RIFTHERALD"):
+                return "heralds"
+            if monster_type in ("HORDE", "VOIDGRUB"):
+                return "voidgrubs"
+            if monster_type in ("ATAKHAN", "RUINOUS_ATAKHAN", "VORACIOUS_ATAKHAN"):
+                return "atakhans"
+        return None
+
+    conversion_breakdown: dict[str, int] = defaultdict(int)
 
     for frame in timeline.info.frames:
         for event in frame.events:
@@ -194,12 +242,63 @@ def calculate_objective_control(timeline: MatchTimeline, participant_id: int) ->
                     if killer_id == participant_id or participant_id in assisting_ids:
                         tower_kills += 1
 
+            if event.get("type") in {"CHAMPION_KILL", "BUILDING_KILL", "ELITE_MONSTER_KILL"}:
+                conversion_events.append(event)
+
+    conversion_events.sort(key=_event_timestamp)
+
+    for index, event in enumerate(conversion_events):
+        if event.get("type") != "CHAMPION_KILL":
+            continue
+
+        killer_id = int(event.get("killerId", 0))
+        if killer_id not in team_participant_ids:
+            continue
+
+        team_kills += 1
+        window_end = _event_timestamp(event) + _CONVERSION_LOOKAHEAD_MS
+        probe = index + 1
+
+        while probe < len(conversion_events):
+            candidate = conversion_events[probe]
+            candidate_ts = _event_timestamp(candidate)
+            if candidate_ts > window_end:
+                break
+
+            c_type = candidate.get("type")
+            bucket = _conversion_bucket(candidate)
+            if bucket:
+                if c_type == "BUILDING_KILL":
+                    if int(candidate.get("teamId", 0)) != team_id:
+                        conversion_breakdown[bucket] += 1
+                        team_conversions += 1
+                        break
+                elif (
+                    c_type == "ELITE_MONSTER_KILL"
+                    and int(candidate.get("killerId", 0)) in team_participant_ids
+                ):
+                    conversion_breakdown[bucket] += 1
+                    team_conversions += 1
+                    break
+            probe += 1
+
     # Calculate participation rates
     epic_monster_participation = epic_monsters / max(total_epic_monsters, 1)
     tower_participation = tower_kills / max(total_towers, 1)
 
-    # Combined objective setup score
-    objective_setup = (epic_monster_participation + tower_participation) / 2
+    # Combined objective setup score (personal + team conversion health)
+    personal_score = (epic_monster_participation + tower_participation) / 2
+    conversion_rate = team_conversions / team_kills if team_kills > 0 else 0.0
+    conversion_volume = (
+        min(team_conversions / _CONVERSION_VOLUME_NORMALIZER, 1.0) if team_conversions > 0 else 0.0
+    )
+    team_conversion_score = (
+        conversion_rate * _CONVERSION_RATE_WEIGHT + conversion_volume * _CONVERSION_VOLUME_WEIGHT
+    )
+    objective_setup = (
+        personal_score * _PERSONAL_OBJECTIVE_WEIGHT
+        + team_conversion_score * _TEAM_CONVERSION_WEIGHT
+    )
 
     return {
         "epic_monster_participation": epic_monster_participation,
@@ -207,6 +306,13 @@ def calculate_objective_control(timeline: MatchTimeline, participant_id: int) ->
         "objective_setup": objective_setup,
         "epic_monsters": epic_monsters,
         "tower_kills": tower_kills,
+        "personal_objective_score": personal_score,
+        "team_conversion_rate": conversion_rate,
+        "team_conversion_score": team_conversion_score,
+        "team_post_kill_conversions": team_conversions,
+        "team_kills_considered": team_kills,
+        "team_conversion_volume": conversion_volume,
+        "team_conversion_breakdown": dict(conversion_breakdown),
     }
 
 
@@ -535,7 +641,13 @@ def calculate_survivability(timeline: MatchTimeline, participant_id: int) -> dic
     }
 
 
-def calculate_cc_contribution(timeline: MatchTimeline, participant_id: int) -> dict[str, float]:
+def calculate_cc_contribution(
+    timeline: MatchTimeline,
+    participant_id: int,
+    *,
+    participant_data: dict[str, Any] | None = None,
+    game_duration_ms: float | None = None,
+) -> dict[str, float]:
     """Calculate crowd control contribution metrics.
 
     Returns:
@@ -544,33 +656,67 @@ def calculate_cc_contribution(timeline: MatchTimeline, participant_id: int) -> d
         - cc_efficiency: CC time per minute
         - cc_setup: CC contribution to teamfights/objectives
     """
-    last_frame = timeline.info.frames[-1]
-    participant_frame = last_frame.participant_frames.get(str(participant_id))
+    frames = timeline.info.frames or []
+    last_frame = frames[-1] if frames else None
+    participant_frame = (
+        last_frame.participant_frames.get(str(participant_id)) if last_frame else None
+    )
 
-    if not participant_frame:
-        return {
-            "cc_duration": 0.0,
-            "cc_efficiency": 0.0,
-            "cc_setup": 0.0,
-            "total_cc_time": 0,
-            "cc_per_min": 0.0,
-        }
+    timeline_cc_time_ms = float(getattr(participant_frame, "time_enemy_spent_controlled", 0) or 0)
 
-    # Extract CC time from timeline (milliseconds) and convert to seconds for scoring
-    cc_time_ms = participant_frame.time_enemy_spent_controlled
+    def _as_float(value: Any) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    fallback_seconds = None
+    if participant_data:
+        fallback_seconds = _as_float(
+            participant_data.get("timeCCingOthers") or participant_data.get("totalTimeCCDealt")
+        )
+
+    cc_time_ms = timeline_cc_time_ms
+    fallback_used = False
+    if cc_time_ms <= 0 and fallback_seconds and fallback_seconds > 0:
+        cc_time_ms = fallback_seconds * 1000.0
+        fallback_used = True
+
+    if game_duration_ms is None:
+        game_duration_ms = float(last_frame.timestamp or 0) if last_frame else None
+
+    time_played = _as_float(participant_data.get("timePlayed")) if participant_data else None
+    if (
+        fallback_used
+        and time_played
+        and time_played > 0
+        or (not game_duration_ms or game_duration_ms <= 0)
+        and time_played
+        and time_played > 0
+    ):
+        game_duration_ms = time_played * 1000.0
+
     cc_time_sec = cc_time_ms / 1000.0
+    game_duration_min = (
+        (game_duration_ms / 60000.0) if game_duration_ms and game_duration_ms > 0 else 0.0
+    )
+    cc_per_min = cc_time_sec / max(game_duration_min, 1.0) if cc_time_sec > 0 else 0.0
 
-    # CC duration score (normalize around 60s total CC)
     cc_duration = min(cc_time_sec / 60.0, 1.0)
+    cc_efficiency = min(cc_per_min / 10.0, 1.0)
+    cc_setup = cc_efficiency  # Placeholder until we correlate CC with objectives
 
-    # CC efficiency (CC per minute) based on seconds per minute
-    game_duration_min = last_frame.timestamp / 60000
-    cc_per_min = cc_time_sec / max(game_duration_min, 1)
-    cc_efficiency = min(cc_per_min / 10.0, 1.0)  # Normalize around 10s CC/min
-
-    # CC setup (simplified: same as CC efficiency for now)
-    # In production, would correlate CC with kills/objectives
-    cc_setup = cc_efficiency
+    if fallback_used:
+        logger.debug(
+            "cc_metrics_fallback_used",
+            extra={
+                "participant_id": participant_id,
+                "cc_time_sec": round(cc_time_sec, 1),
+                "game_duration_min": round(game_duration_min, 2),
+            },
+        )
 
     return {
         "cc_duration": cc_duration,
@@ -603,7 +749,14 @@ def calculate_total_score(
     Returns:
         PlayerScore with all dimension scores and metadata
     """
-    logger = logging.getLogger(__name__)
+
+    def _safe_float(value: Any) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     # Calculate all dimensions
     combat = calculate_combat_efficiency(timeline, participant_id)
@@ -615,7 +768,15 @@ def calculate_total_score(
     tankiness = calculate_tankiness(timeline, participant_id)
     damage_comp = calculate_damage_composition(timeline, participant_id)
     survivability = calculate_survivability(timeline, participant_id)
-    cc_contrib = calculate_cc_contribution(timeline, participant_id)
+    frames = timeline.info.frames or []
+    last_frame = frames[-1] if frames else None
+
+    cc_contrib = calculate_cc_contribution(
+        timeline,
+        participant_id,
+        participant_data=participant_data,
+        game_duration_ms=float(last_frame.timestamp) if last_frame else None,
+    )
 
     # Aggregate stats for raw_stats dictionary
     total_cs = economic.get("total_cs", 0)
@@ -623,8 +784,9 @@ def calculate_total_score(
     total_xp = growth.get("total_xp", 0)
 
     # Get last frame participant data
-    last_frame = timeline.info.frames[-1]
-    participant_frame = last_frame.participant_frames.get(str(participant_id))
+    participant_frame = (
+        last_frame.participant_frames.get(str(participant_id)) if last_frame else None
+    )
 
     if not participant_frame:
         logger.warning("No participant frame found for participant %d", participant_id)
@@ -695,6 +857,16 @@ def calculate_total_score(
     except Exception:
         _gold_diff_int = int(_gold_diff_val) if isinstance(_gold_diff_val, int) else 0
 
+    cc_total_time_ms = _safe_float(cc_contrib.get("total_cc_time")) or 0.0
+    cc_time_seconds = cc_total_time_ms / 1000.0
+    cc_per_min_value = _safe_float(cc_contrib.get("cc_per_min")) or 0.0
+    cc_score_value: float | None = None
+    if participant_data:
+        challenges = participant_data.get("challenges") or {}
+        cc_score_value = _safe_float(
+            challenges.get("crowdControlScore") or participant_data.get("crowdControlScore")
+        )
+
     raw_stats = {
         # Basic combat (from Match-V5 Details for accuracy)
         "kills": accurate_kills,
@@ -719,13 +891,18 @@ def calculate_total_score(
         "detector_wards_placed": participant_data.get("detectorWardsPlaced", 0)
         if participant_data
         else 0,
-        "cc_time": cc_contrib.get("total_cc_time", 0) / 1000,  # Convert ms to seconds
+        "cc_time": cc_time_seconds,
+        "cc_per_min": cc_per_min_value,
+        "cc_score": cc_score_value if cc_score_value is not None else 0.0,
         # Growth
         "level": growth.get("final_level", 0),
         "xp": total_xp,
         # Objectives
         "turret_kills": objective.get("tower_kills", 0),
         "epic_monsters": objective.get("epic_monsters", 0),
+        "objective_personal_score": float(objective.get("personal_objective_score", 0.0)),
+        "objective_team_conversion_rate": float(objective.get("team_conversion_rate", 0.0)),
+        "objective_team_conversions": int(objective.get("team_post_kill_conversions", 0)),
         # Multi-kills & Sprees (from Match-V5 Details)
         "double_kills": participant_data.get("doubleKills", 0) if participant_data else 0,
         "triple_kills": participant_data.get("tripleKills", 0) if participant_data else 0,
@@ -759,15 +936,7 @@ def calculate_total_score(
         (economic["cs_efficiency"] + economic["gold_lead"] + economic["item_timing"]) / 3 * 100
     )
     vision_score = (vision["ward_placement_rate"] + vision["ward_clear_efficiency"]) / 2 * 100
-    objective_score = (
-        (
-            objective["epic_monster_participation"]
-            + objective["tower_participation"]
-            + objective["objective_setup"]
-        )
-        / 3
-        * 100
-    )
+    objective_score = float(objective.get("objective_setup", 0.0)) * 100
     teamplay_score = (
         (teamplay["assist_ratio"] + teamplay["teamfight_presence"] + teamplay["objective_assists"])
         / 3
@@ -829,6 +998,33 @@ def calculate_total_score(
         + survivability_score * weights["survivability"]
         + cc_contrib_score * weights["cc_contrib"]
     )
+    dominance_bonus = max(0.0, combat_score - teamplay_score) * 0.2
+    total_score = min(100.0, total_score + dominance_bonus)
+
+    if total_score >= 80:
+        emotion_tag = "excited"
+    elif total_score >= 60:
+        emotion_tag = "positive"
+    elif total_score >= 40:
+        emotion_tag = "neutral"
+    else:
+        emotion_tag = "concerned"
+
+    dimension_scores = [
+        ("combat", combat_score),
+        ("economy", economy_score),
+        ("objective", objective_score),
+        ("vision", vision_score),
+        ("teamplay", teamplay_score),
+        ("growth", growth_score),
+        ("tankiness", tankiness_score),
+        ("damage_composition", damage_comp_score),
+        ("survivability", survivability_score),
+        ("crowd_control", cc_contrib_score),
+    ]
+    sorted_dims = sorted(dimension_scores, key=lambda item: item[1], reverse=True)
+    top_strengths = [name for name, _ in sorted_dims[:2]]
+    weakest_dims = [name for name, _ in sorted(dimension_scores, key=lambda item: item[1])[:2]]
 
     # Map computed dimension scores to PlayerScore schema
     # Note: PlayerScore expects "*_efficiency"/"*_management" for核心5维，值域0-100
@@ -855,6 +1051,9 @@ def calculate_total_score(
         # Convert to percentage for prompt consistency
         kill_participation=float(combat.get("kill_participation", 0.0)) * 100.0,
         raw_stats=raw_stats,
+        emotion_tag=emotion_tag,
+        strengths=top_strengths,
+        improvements=weakest_dims,
     )
 
 

@@ -14,14 +14,22 @@ Reference:
 https://discord.com/developers/docs/interactions/receiving-and-responding#edit-original-interaction-response
 """
 
+import asyncio
+import json
 import logging
-from typing import Any, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from src.contracts.team_analysis import TeamAnalysisReport
+from urllib.parse import urlparse
 
 import aiohttp
 
 from src.config.settings import get_settings
 from src.contracts.analysis_results import AnalysisErrorReport, FinalAnalysisReport
 from src.core.ports import DiscordWebhookPort
+from src.core.views.voice_button_helper import build_voice_custom_id
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +61,29 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
     def __init__(self) -> None:
         """Initialize Discord webhook adapter."""
         self._session: aiohttp.ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
         logger.info("Discord webhook adapter initialized")
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Lazy initialize aiohttp session with connection pooling."""
-        if self._session is None or self._session.closed:
+        loop = asyncio.get_running_loop()
+        session_invalid = (
+            self._session is None
+            or self._session.closed
+            or self._session_loop is None
+            or self._session_loop.is_closed()
+            or self._session_loop is not loop
+        )
+        if session_invalid:
+            if self._session is not None and not self._session.closed:
+                try:
+                    await self._session.close()
+                except Exception as exc:
+                    logger.debug("discord_webhook_session_close_failed", extra={"error": str(exc)})
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT)
             )
+            self._session_loop = loop
         return self._session
 
     def _mask_token(self, token: str) -> str:
@@ -71,8 +94,56 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
         suffix = token[-4:]
         return f"{prefix}***{suffix}"
 
+    @staticmethod
+    def _is_attachment_mode(base_url: str | None) -> bool:
+        """Return True when CDN 未配置（或仍指向 localhost），需要走附件上传。"""
+        if not base_url or not isinstance(base_url, str):
+            return True
+        parsed = urlparse(base_url)
+        host = (parsed.hostname or "").lower()
+        return host in ("", "localhost", "127.0.0.1")
+
+    def _select_local_visual(self, visuals: list[dict[str, Any]]) -> tuple[str, bytes] | None:
+        """Pick the first build visual that has an existing local PNG on disk."""
+        for visual in visuals or []:
+            local_path = visual.get("local_path")
+            if not local_path:
+                continue
+            path_obj = Path(local_path)
+            if not path_obj.exists():
+                continue
+            try:
+                return path_obj.name, path_obj.read_bytes()
+            except Exception as exc:
+                logger.warning(
+                    "build_visual_read_failed",
+                    extra={"path": str(path_obj), "error": str(exc)},
+                )
+        return None
+
+    def _patch_with_optional_attachments(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        payload: dict[str, Any],
+        attachments: list[tuple[str, bytes]] | None = None,
+    ):
+        """Send PATCH request, auto切换 multipart/form-data 以附带本地图片。"""
+        if attachments:
+            form = aiohttp.FormData()
+            form.add_field("payload_json", json.dumps(payload), content_type="application/json")
+            for idx, (filename, data) in enumerate(attachments):
+                form.add_field(
+                    f"files[{idx}]",
+                    data,
+                    filename=filename,
+                    content_type="image/png",
+                )
+            return session.patch(url, data=form)
+        return session.patch(url, json=payload)
+
     async def publish_channel_message(
-        self, channel_id: str, embed_dict: dict[str, Any], content: Optional[str] = None
+        self, channel_id: str, embed_dict: dict[str, Any], content: str | None = None
     ) -> bool:
         """Public wrapper to post a message to a channel using bot token."""
         settings = get_settings()
@@ -91,7 +162,7 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
             return response.status == 200
 
     async def _post_channel_message(
-        self, channel_id: str, embed_dict: dict[str, Any], content: Optional[str] = None
+        self, channel_id: str, embed_dict: dict[str, Any], content: str | None = None
     ) -> bool:
         """Post message to channel using bot token."""
         settings = get_settings()
@@ -163,6 +234,43 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
 
             embed = render_analysis_embed(analysis_report.model_dump())
 
+            settings = get_settings()
+            visuals = []
+            if analysis_report.builds_metadata:
+                visuals = list(analysis_report.builds_metadata.get("visuals") or [])
+
+            attachments: list[tuple[str, bytes]] = []
+            is_attachment_mode = self._is_attachment_mode(settings.build_visual_base_url)
+            logger.info(
+                "discord_webhook_image_mode",
+                extra={
+                    "is_attachment_mode": is_attachment_mode,
+                    "build_visual_base_url": settings.build_visual_base_url,
+                    "visuals_count": len(visuals),
+                },
+            )
+
+            if is_attachment_mode:
+                attachment = self._select_local_visual(visuals)
+                if attachment:
+                    filename, file_bytes = attachment
+                    attachments.append((filename, file_bytes))
+                    logger.info(
+                        "discord_webhook_using_attachment",
+                        extra={
+                            "attachment_filename": filename,
+                            "file_size_bytes": len(file_bytes),
+                            "attachment_url": f"attachment://{filename}",
+                        },
+                    )
+                    # Override the HTTP URL set by render_analysis_embed
+                    embed.set_image(url=f"attachment://{filename}")
+                else:
+                    logger.warning(
+                        "discord_webhook_no_local_visual",
+                        extra={"visuals": visuals},
+                    )
+
             # [DEV MODE: Validate rendered embed]
             if os.getenv("CHIMERA_DEV_VALIDATE_DISCORD", "").lower() in ("1", "true", "yes"):
                 from src.core.validation import validate_embed_strict
@@ -182,13 +290,13 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
             # Prepare PATCH payload
             payload: dict[str, Any] = {
                 "content": None,  # Clear the "thinking..." message
-                "embeds": [embed.to_dict()],  # discord.Embed to dict
                 "allowed_mentions": {"parse": []},  # Disable @mentions for safety
             }
+            payload["embeds"] = [embed.to_dict()]
+            payload["components"] = []
 
             # Optionally attach feedback buttons as message components
             try:
-                settings = get_settings()
                 if settings.feature_feedback_enabled:
                     match_id = analysis_report.match_id
                     # Discord component payload (Action Row with buttons)
@@ -224,7 +332,7 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
                                 "style": 1,  # Primary (blurple)
                                 "label": "播报到我所在频道",
                                 "emoji": {"name": "🔊"},
-                                "custom_id": f"chimera:voice:play:{match_id}",
+                                "custom_id": build_voice_custom_id(match_id),
                             }
                         )
 
@@ -234,32 +342,6 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
                             "components": buttons[:5],  # Discord limit: max 5 buttons per row
                         }
                     ]
-                # Team UI helper: add an extra row to open paginated team pages when available
-                try:
-                    report_dict = analysis_report.model_dump()
-                    raw_stats = (report_dict.get("v1_score_summary") or {}).get("raw_stats") or {}
-                    has_team_receipt = bool(raw_stats.get("team_receipt"))
-                except Exception:
-                    has_team_receipt = False
-                if has_team_receipt or os.getenv("TEAM_UI_BUTTONS", "").lower() in (
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                ):
-                    team_row = {
-                        "type": 1,
-                        "components": [
-                            {
-                                "type": 2,
-                                "style": 1,  # Primary
-                                "label": "更多团队页",
-                                "emoji": {"name": "🧾"},
-                                "custom_id": f"team_analysis:open_pages:{analysis_report.match_id}",
-                            }
-                        ],
-                    }
-                    payload.setdefault("components", []).append(team_row)
             except Exception as e:
                 # Components are optional; never fail webhook due to UI attachment
                 logger.warning(f"Failed to attach feedback components: {e}")
@@ -286,7 +368,10 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
 
             # Send PATCH request
             session = await self._ensure_session()
-            async with session.patch(url, json=payload) as response:
+            response_ctx = self._patch_with_optional_attachments(
+                session, url, payload, attachments or None
+            )
+            async with response_ctx as response:
                 if response.status == 200:
                     logger.info(
                         f"Successfully published analysis for match {analysis_report.match_id} "
@@ -343,57 +428,52 @@ class DiscordWebhookAdapter(DiscordWebhookPort):
         team_report: "TeamAnalysisReport",
         channel_id: str | None = None,
     ) -> bool:
-        """Publish team overview as the main webhook message.
-
-        Uses the team-specific renderer and attaches a button to open paginated pages.
-        """
+        """Publish team overview作为主 webhook 消息（仅单页嵌入）。"""
         try:
             url = self._build_webhook_url(application_id, interaction_token)
             from src.core.views.team_analysis_view import render_team_overview_embed
 
             embed = render_team_overview_embed(team_report)
 
+            settings = get_settings()
+            attachments: list[tuple[str, bytes]] = []
+            metadata = getattr(team_report, "builds_metadata", None)
+            visuals = list(metadata.get("visuals") or []) if isinstance(metadata, dict) else []
+            if self._is_attachment_mode(settings.build_visual_base_url):
+                attachment = self._select_local_visual(visuals)
+                if attachment:
+                    filename, file_bytes = attachment
+                    attachments.append((filename, file_bytes))
+                    embed.set_image(url=f"attachment://{filename}")
+
             payload: dict[str, Any] = {
                 "content": None,
-                "embeds": [embed.to_dict()],
                 "allowed_mentions": {"parse": []},
-                "components": [
-                    {
-                        "type": 1,
-                        "components": [
-                            {
-                                "type": 2,
-                                "style": 1,
-                                "label": "更多团队页",
-                                "emoji": {"name": "🧾"},
-                                "custom_id": f"team_analysis:open_pages:{team_report.match_id}",
-                            }
-                        ],
-                    }
-                ],
+                "components": [],
             }
+            payload["embeds"] = [embed.to_dict()]
 
             # Optionally attach voice play button for team overview (reuse single-match handler)
             try:
-                settings = get_settings()
                 if settings.feature_voice_enabled:
                     voice_button = {
                         "type": 2,
                         "style": 1,  # Primary
                         "label": "播报到我所在频道",
                         "emoji": {"name": "🔊"},
-                        "custom_id": f"chimera:voice:play:{team_report.match_id}",
+                        "custom_id": build_voice_custom_id(team_report.match_id),
                     }
                     # Append to first action row if capacity allows (<=5), else create new row
-                    if payload["components"] and len(payload["components"][0]["components"]) < 5:
-                        payload["components"][0]["components"].append(voice_button)
-                    else:
-                        payload["components"].append({"type": 1, "components": [voice_button]})
+                    voice_row = {"type": 1, "components": [voice_button]}
+                    payload.setdefault("components", []).append(voice_row)
             except Exception as _e:
                 logger.warning(f"Failed to attach voice button: {_e}")
 
             session = await self._ensure_session()
-            async with session.patch(url, json=payload) as response:
+            response_ctx = self._patch_with_optional_attachments(
+                session, url, payload, attachments or None
+            )
+            async with response_ctx as response:
                 if response.status == 200:
                     logger.info(
                         f"Successfully published TEAM overview for match {team_report.match_id} "

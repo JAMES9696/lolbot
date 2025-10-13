@@ -42,9 +42,7 @@ class FallbackMatchData(BaseModel):
     kills: int = Field(description="Kills", ge=0, default=0)
     deaths: int = Field(description="Deaths", ge=0, default=0)
     assists: int = Field(description="Assists", ge=0, default=0)
-    total_damage_dealt: int = Field(
-        description="Total damage dealt to champions", ge=0, default=0
-    )
+    total_damage_dealt: int = Field(description="Total damage dealt to champions", ge=0, default=0)
     gold_earned: int = Field(description="Gold earned", ge=0, default=0)
 
     # Optional message
@@ -80,7 +78,7 @@ def render_fallback_analysis_embed(data: dict) -> discord.Embed:
     # Game mode info
     detected_mode = data.get("detected_mode", {})
     queue_name = detected_mode.get("queue_name", "未知模式")
-    mode_label = detected_mode.get("mode", "unknown")
+    detected_mode.get("mode", "unknown")
 
     # Fallback message
     fallback_msg = data.get(
@@ -102,9 +100,7 @@ def render_fallback_analysis_embed(data: dict) -> discord.Embed:
     title_text = f"{title_emoji} 基础战绩 | {champion_name}"
 
     # Description: KDA + basic stats
-    kda_ratio = (
-        ((kills + assists) / deaths) if deaths > 0 else float(kills + assists)
-    )
+    kda_ratio = ((kills + assists) / deaths) if deaths > 0 else float(kills + assists)
 
     description = (
         f"**召唤师**: {summoner_name}\n"

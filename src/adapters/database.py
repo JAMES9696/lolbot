@@ -16,6 +16,7 @@ import asyncpg
 from src.config.settings import settings
 from src.core.ports import DatabasePort
 from src.core.observability import llm_debug_wrapper
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -468,6 +469,36 @@ class DatabaseAdapter(DatabasePort):
             logger.error(f"Error fetching user binding for {discord_id}: {e}")
             return None
 
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=False,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_bindings", "op": "list"},
+    )
+    async def list_user_bindings(self) -> list[dict[str, Any]]:
+        """Return all stored Discord ⇄ Riot bindings ordered by update time."""
+        if not self._pool:
+            logger.warning("Database pool not initialized; returning empty bindings list")
+            return []
+
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT discord_id,
+                           puuid,
+                           summoner_name,
+                           region,
+                           updated_at
+                    FROM user_bindings
+                    ORDER BY updated_at DESC
+                    """
+                )
+                return [dict(row) for row in rows]
+        except Exception as exc:
+            logger.error("Error listing user bindings: %s", exc)
+            return []
+
     async def delete_user_binding(self, discord_id: str) -> bool:
         """Delete user binding by Discord ID.
 
@@ -623,20 +654,14 @@ class DatabaseAdapter(DatabasePort):
                     import json as _json
 
                     if isinstance(md, str):
-                        try:
+                        with contextlib.suppress(Exception):
                             md = _json.loads(md)
-                        except Exception:
-                            pass
                     if isinstance(tl, str):
-                        try:
+                        with contextlib.suppress(Exception):
                             tl = _json.loads(tl)
-                        except Exception:
-                            pass
                     if isinstance(an, str):
-                        try:
+                        with contextlib.suppress(Exception):
                             an = _json.loads(an)
-                        except Exception:
-                            pass
                     return {
                         "match_data": md,
                         "timeline_data": tl,

@@ -97,9 +97,9 @@ class V22PerformanceTrends(BaseModel):
     )
 
     # Persistent weakness identification
-    persistent_weak_dimension: Literal[
-        "Combat", "Economy", "Vision", "Objective Control", "Teamplay"
-    ] | None = Field(
+    persistent_weak_dimension: (
+        Literal["Combat", "Economy", "Vision", "Objective Control", "Teamplay"] | None
+    ) = Field(
         default=None,
         description=(
             "Dimension where user scored below team average in ≥70% of recent matches. "

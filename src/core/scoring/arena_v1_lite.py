@@ -28,6 +28,7 @@ from src.contracts.v23_multi_mode_analysis import (
     V23ArenaAugmentAnalysis,
     V23ArenaRoundPerformance,
 )
+from src.core.data.arena_augments import ArenaAugmentCatalog
 
 
 # =============================================================================
@@ -153,32 +154,28 @@ def analyze_arena_augments(
 
     # Extract Augments from player data
     # (Field name may vary - check Match-V5 Arena response structure)
-    augments_selected = []
+    augment_ids: list[int] = []
 
     # Example: player_data["playerAugment1"], "playerAugment2", etc.
     for i in range(1, 6):  # Typically 3-4 Augments per match
         augment_id = player_data.get(f"playerAugment{i}")
-        if augment_id:
-            augments_selected.append(str(augment_id))  # Convert to string for now
+        if augment_id is None:
+            continue
+        try:
+            augment_ids.append(int(augment_id))
+        except (TypeError, ValueError):
+            continue
 
-    # Map Augment IDs to names (simplified - production needs full mapping)
-    # Example mapping (this should be a complete database)
-    AUGMENT_NAMES = {
-        "1": "猛攻",
-        "2": "韧性",
-        "3": "疾行",
-        "4": "生命窃取",
-        "5": "坚韧",
-        # ... (complete mapping needed)
-    }
-
-    augment_names = [AUGMENT_NAMES.get(aug_id, f"未知符文{aug_id}") for aug_id in augments_selected]
+    augment_names = _ARENA_AUGMENT_CATALOG.resolve_ids(augment_ids)
 
     # Analyze champion synergy (rule-based, NO WIN RATES)
     champion_name = player_data["championName"]
 
     # Example synergy rules (simplified)
-    champion_synergy = f"你选择的增强符文与你的英雄 {champion_name} 配合。"
+    if not augment_names:
+        champion_synergy = "本场未检索到增强符文记录，可能是数据同步延迟或战局提前结束。"
+    else:
+        champion_synergy = f"你选择的增强符文与你的英雄 {champion_name} 配合。"
 
     # Check for common synergies
     if "猛攻" in augment_names and champion_name in ["Yasuo", "Zed", "Talon"]:  # Assassins
@@ -191,11 +188,13 @@ def analyze_arena_augments(
             f"你选择的【坚韧】增强符文与你的坦克英雄 {champion_name} 配合良好，"
             "提升了前排承伤能力。这是防御型英雄的合理选择。"
         )
-    else:
+    elif augment_names:
         champion_synergy = (
             f"你选择的增强符文包括：{', '.join(['【' + n + '】' for n in augment_names])}。"
             f"这些符文与 {champion_name} 的核心能力相匹配。"
         )
+    else:
+        champion_synergy = "增强符文数据缺失，建议确认比赛是否完整上传。"
 
     # Analyze partner synergy (if partner data available)
     partner_synergy = "队友符文数据不可用，无法分析协同效果。"
@@ -395,3 +394,6 @@ def generate_arena_analysis_report(
         improvement_suggestions=[],  # LLM fills this
         algorithm_version="v2.3-arena-lite",
     )
+
+
+_ARENA_AUGMENT_CATALOG = ArenaAugmentCatalog()

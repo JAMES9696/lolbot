@@ -8,7 +8,7 @@ from src.config.settings import Settings
 
 async def check_recent_analyses():
     """Check recent analyses, especially failed ones."""
-    settings = Settings()
+    Settings()
     db = DatabaseAdapter()
     await db.connect()
 

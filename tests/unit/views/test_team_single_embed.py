@@ -216,6 +216,26 @@ def test_progress_fields_include_ascii_bars():
     assert "▒" in watch_field.value or "█" in watch_field.value
 
 
+def test_highlights_include_opponent_delta():
+    report = _base_report()
+    report.strengths = [
+        TeamAnalysisReport.DimensionHighlight(
+            dimension="combat_efficiency",
+            label="战斗效率",
+            score=88.8,
+            delta_vs_team=12.3,
+            delta_vs_opponent=4.5,
+        )
+    ]
+
+    embed = render_team_overview_embed(report)
+    core_field = next((f for f in embed.fields if "核心优势" in f.name), None)
+
+    assert core_field is not None, "核心优势字段缺失"
+    assert "vs 队均" in core_field.value
+    assert "vs 对位" in core_field.value
+
+
 def test_builds_field_uses_summary_text():
     report = _base_report()
     report.builds_summary_text = "出装: 破败王者之刃 · 无尽之刃\n符文: 精密 - 强攻 | 次系 主宰"

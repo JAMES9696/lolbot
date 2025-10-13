@@ -208,40 +208,39 @@ async def handle_voice_button_click(
     headers = {"X-Auth-Token": auth_token} if auth_token else {}
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                broadcast_url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    logger.info(
-                        "Voice broadcast triggered",
-                        extra={
-                            "match_id": match_id,
-                            "correlation_id": correlation_id,
-                            "user_id": interaction.user.id,
-                        },
-                    )
-                    await interaction.followup.send(
-                        "✅ 语音播报已发送到你的语音频道",
-                        ephemeral=True,
-                    )
-                else:
-                    error_text = await resp.text()
-                    logger.error(
-                        "Voice broadcast failed",
-                        extra={
-                            "status": resp.status,
-                            "error": error_text,
-                            "correlation_id": correlation_id,
-                        },
-                    )
-                    await interaction.followup.send(
-                        f"❌ 语音播报失败 ({resp.status})",
-                        ephemeral=True,
-                    )
+        async with aiohttp.ClientSession() as session, session.post(
+            broadcast_url,
+            json=payload,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 200:
+                logger.info(
+                    "Voice broadcast triggered",
+                    extra={
+                        "match_id": match_id,
+                        "correlation_id": correlation_id,
+                        "user_id": interaction.user.id,
+                    },
+                )
+                await interaction.followup.send(
+                    "✅ 语音播报已发送到你的语音频道",
+                    ephemeral=True,
+                )
+            else:
+                error_text = await resp.text()
+                logger.error(
+                    "Voice broadcast failed",
+                    extra={
+                        "status": resp.status,
+                        "error": error_text,
+                        "correlation_id": correlation_id,
+                    },
+                )
+                await interaction.followup.send(
+                    f"❌ 语音播报失败 ({resp.status})",
+                    ephemeral=True,
+                )
     except Exception as e:
         logger.exception(
             "Exception during voice broadcast", extra={"match_id": match_id, "error": str(e)}

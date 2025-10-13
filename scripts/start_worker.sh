@@ -52,7 +52,7 @@ find "$PROMETHEUS_MULTIPROC_DIR" -type f -name '*.db' -maxdepth 1 -print -delete
 echo "Using PROMETHEUS_MULTIPROC_DIR=$PROMETHEUS_MULTIPROC_DIR"
 
 # Start Celery worker
-celery -A src.tasks.celery_app worker \
+poetry run celery -A src.tasks.celery_app.celery_app worker \
     --loglevel="$LOGLEVEL" \
     --concurrency="$CONCURRENCY" \
     --hostname="$WORKER_NAME@%h" \

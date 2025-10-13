@@ -62,13 +62,28 @@ class RiotAPIAdapter(RiotAPIPort):
         except Exception:
             pass
         self._session: Any | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
         logger.info("Riot API adapter initialized")
 
     async def _ensure_session(self):
         import aiohttp
 
-        if self._session is None or getattr(self._session, "closed", True):
-            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+        loop = asyncio.get_running_loop()
+        needs_new_session = (
+            self._session is None
+            or getattr(self._session, "closed", True)
+            or self._session_loop is None
+            or self._session_loop is not loop
+        )
+        if needs_new_session:
+            if self._session and not getattr(self._session, "closed", True):
+                try:
+                    await self._session.close()
+                except Exception:
+                    logger.warning("Failed to close stale Riot API session", exc_info=True)
+            timeout = aiohttp.ClientTimeout(total=15)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session_loop = loop
         return self._session
 
     async def close(self) -> None:
@@ -77,6 +92,9 @@ class RiotAPIAdapter(RiotAPIPort):
                 await self._session.close()
         except Exception:
             pass
+        finally:
+            self._session = None
+            self._session_loop = None
 
     async def get_account_by_riot_id(
         self, game_name: str, tag_line: str, region: str = "americas"

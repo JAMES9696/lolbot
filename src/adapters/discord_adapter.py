@@ -20,10 +20,51 @@ from src.contracts.discord_interactions import (
     EmbedColor,
 )
 from src.core.observability import clear_correlation_id, set_correlation_id
+from src.core.services.celery_task_service import TaskQueueError
 from src.core.services.voice_broadcast_service import VoiceBroadcastService
+import contextlib
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def _select_personal_tts_summary(meta: dict[str, Any]) -> str | None:
+    if not isinstance(meta, dict):
+        return None
+    candidate = meta.get("tts_summary")
+    if not isinstance(candidate, str):
+        return None
+    candidate = candidate.strip()
+    if not candidate:
+        return None
+
+    source_hint = str(meta.get("tts_summary_source") or "").lower()
+    if not source_hint:
+        source_hint = str(meta.get("source") or "").lower()
+
+    disallowed = {"team_tldr", "team_tts", "team_summary"}
+    if source_hint in disallowed:
+        return None
+
+    allowed = {"llm", "fallback", "individual", "personal", ""}
+    if source_hint and source_hint not in allowed:
+        return None
+
+    return candidate
+
+
+def _normalize_voice_channel_id(raw_channel_id: int | str | None) -> int | None:
+    """Convert arbitrary voice channel identifiers to a valid Discord snowflake."""
+
+    try:
+        channel_id = int(raw_channel_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+    if channel_id <= 0:
+        return None
+
+    return channel_id
 
 
 class ChimeraBot(commands.Bot):
@@ -289,10 +330,6 @@ class DiscordAdapter:
                         if custom_id.startswith("chimera:voice:play:"):
                             await self._handle_voice_play_interaction(interaction, custom_id)
                             return
-                        # Team pages open button
-                        if custom_id.startswith("team_analysis:open_pages:"):
-                            await self._handle_team_open_pages_interaction(interaction, custom_id)
-                            return
             except Exception:
                 logger.exception("Unhandled error in on_interaction handler")
 
@@ -433,7 +470,7 @@ class DiscordAdapter:
         await interaction.response.defer(ephemeral=False)  # Public loading state
 
         # Bind correlation id early so all bot-side logs are traceable
-        _cid = f"discord:{interaction.id}:{int(time.time()*1000)%1000000}"
+        _cid = f"discord:{interaction.id}:{int(time.time() * 1000) % 1000000}"
         try:
             set_correlation_id(_cid)
         except Exception:
@@ -481,10 +518,8 @@ class DiscordAdapter:
             match_id_list = await self.match_history_service.get_match_id_list(
                 puuid=puuid, region=region, count=20
             )
-            try:
+            with contextlib.suppress(Exception):
                 logger.info(f"match_history[0:5]={match_id_list[:5]} requested_index={match_index}")
-            except Exception:
-                pass
 
             if len(match_id_list) < match_index:
                 error_embed = discord.Embed(
@@ -663,7 +698,15 @@ class DiscordAdapter:
                             "tts_audio_url": (meta or {}).get("tts_audio_url"),
                         }
 
-                        try:
+                        if isinstance(meta, dict):
+                            meta_summary = meta.get("builds_summary_text")
+                            meta_payload = meta.get("builds_metadata")
+                            if isinstance(meta_summary, str) and meta_summary.strip():
+                                analysis_dict["builds_summary_text"] = meta_summary.strip()
+                            if isinstance(meta_payload, dict) and meta_payload:
+                                analysis_dict["builds_metadata"] = meta_payload
+
+                        with contextlib.suppress(Exception):
                             logger.info(
                                 "Cached render trace: match=%s puuid=%s champion_id=%s champion=%s icon_set=%s",
                                 target_match_id,
@@ -672,8 +715,6 @@ class DiscordAdapter:
                                 champion_name,
                                 bool(champion_icon_url),
                             )
-                        except Exception:
-                            pass
 
                         result_embed = render_analysis_embed(analysis_dict)
                         await interaction.followup.send(embed=result_embed, ephemeral=False)
@@ -715,6 +756,7 @@ class DiscordAdapter:
                 application_id=str(self.bot.application_id),
                 interaction_token=interaction.token,
                 channel_id=str(interaction.channel_id),
+                guild_id=str(interaction.guild_id) if interaction.guild_id else None,
                 discord_user_id=user_id,
                 puuid=puuid,
                 match_id=target_match_id,
@@ -724,15 +766,32 @@ class DiscordAdapter:
             )
 
             # [STEP 6: PUSH TASK TO CELERY QUEUE]
-            task_id = await self.task_service.push_analysis_task(
-                task_name=TASK_ANALYZE_MATCH, payload=payload.model_dump()
-            )
+            try:
+                task_id = await self.task_service.push_analysis_task(
+                    task_name=TASK_ANALYZE_MATCH, payload=payload.model_dump()
+                )
+            except TaskQueueError as tq_err:
+                logger.error(
+                    "Celery queue unavailable for analyze command",
+                    exc_info=True,
+                    extra={"match_id": target_match_id, "error": str(tq_err)},
+                )
+                queue_embed = discord.Embed(
+                    title="⚠️ 后台队列不可用",
+                    description=(
+                        "目前未检测到分析工作进程，请稍后重试。\n"
+                        "管理员：请确认 Redis 与 Celery worker 已启动。"
+                    ),
+                    color=EmbedColor.WARNING,
+                )
+                await interaction.followup.send(embed=queue_embed, ephemeral=True)
+                return
 
             # [STEP 7: SEND LOADING MESSAGE]
             loading_embed = discord.Embed(
                 title="🔄 AI 分析中...",
                 description=(
-                    f"正在对您的第 {match_index} 场比赛进行深度分析。\n\n" "_预计耗时：30-60秒_"
+                    f"正在对您的第 {match_index} 场比赛进行深度分析。\n\n_预计耗时：30-60秒_"
                 ),
                 color=EmbedColor.INFO,
             )
@@ -751,10 +810,8 @@ class DiscordAdapter:
             )
             await interaction.followup.send(embed=error_embed, ephemeral=True)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 clear_correlation_id()
-            except Exception:
-                pass
 
     async def _handle_team_analyze_command(
         self, interaction: discord.Interaction, match_index: int, riot_id: str | None = None
@@ -769,7 +826,7 @@ class DiscordAdapter:
         await interaction.response.defer(ephemeral=False)  # Public loading state
 
         # Bind correlation id early for team analysis as well
-        _cid = f"discord:{interaction.id}:{int(time.time()*1000)%1000000}"
+        _cid = f"discord:{interaction.id}:{int(time.time() * 1000) % 1000000}"
         try:
             set_correlation_id(_cid)
         except Exception:
@@ -817,12 +874,10 @@ class DiscordAdapter:
             match_id_list = await self.match_history_service.get_match_id_list(
                 puuid=puuid, region=region, count=20
             )
-            try:
+            with contextlib.suppress(Exception):
                 logger.info(
                     f"match_history[0:5]={match_id_list[:5]} requested_index={match_index} (team)"
                 )
-            except Exception:
-                pass
 
             if len(match_id_list) < match_index:
                 error_embed = discord.Embed(
@@ -873,7 +928,7 @@ class DiscordAdapter:
                                 team_summary = score_data.get("team_summary", {})
                                 team_report = TeamAnalysisReport(
                                     match_id=target_match_id,
-                                    team_result=match_analytics.get("match_result", "defeat"),
+                                    team_result=record.get("match_result", "defeat"),
                                     team_region=region,
                                     aggregates=team_summary.get("aggregates", {}),
                                     players=team_summary.get("players", []),
@@ -930,15 +985,32 @@ class DiscordAdapter:
             )
 
             # [STEP 6: PUSH TASK TO CELERY QUEUE]
-            task_id = await self.task_service.push_analysis_task(
-                task_name=TASK_ANALYZE_TEAM, payload=payload.model_dump()
-            )
+            try:
+                task_id = await self.task_service.push_analysis_task(
+                    task_name=TASK_ANALYZE_TEAM, payload=payload.model_dump()
+                )
+            except TaskQueueError as tq_err:
+                logger.error(
+                    "Celery queue unavailable for team analyze command",
+                    exc_info=True,
+                    extra={"match_id": target_match_id, "error": str(tq_err)},
+                )
+                queue_embed = discord.Embed(
+                    title="⚠️ 后台队列不可用",
+                    description=(
+                        "团队分析服务暂不可用，因为未检测到 Celery worker。\n"
+                        "请稍后重试，或联系管理员启动任务队列。"
+                    ),
+                    color=EmbedColor.WARNING,
+                )
+                await interaction.followup.send(embed=queue_embed, ephemeral=True)
+                return
 
             # [STEP 7: SEND LOADING MESSAGE]
             loading_embed = discord.Embed(
                 title="🔄 团队分析中...",
                 description=(
-                    f"正在对您的第 {match_index} 场比赛进行团队深度分析。\n\n" "_预计耗时：60-90秒_"
+                    f"正在对您的第 {match_index} 场比赛进行团队深度分析。\n\n_预计耗时：60-90秒_"
                 ),
                 color=EmbedColor.INFO,
             )
@@ -957,10 +1029,8 @@ class DiscordAdapter:
             )
             await interaction.followup.send(embed=error_embed, ephemeral=True)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 clear_correlation_id()
-            except Exception:
-                pass
 
     # --- helpers: Riot ID parsing & region mapping (minimal, no extra deps) ---
     def _parse_riot_id(self, riot_id: str) -> tuple[str, str] | None:
@@ -1301,21 +1371,72 @@ class DiscordAdapter:
 
         Args:
             interaction: Discord interaction object
-            custom_id: Button custom_id (chimera:voice:play:{match_id})
+            custom_id: Button custom_id (chimera:voice:play:{match_id}:{issued_at})
         """
         import time
 
         start_time = time.time()
 
         try:
-            # Parse match_id
+            # Parse match_id + optional issued_at timestamp (accepting legacy/new formats)
             parts = custom_id.split(":")
-            if len(parts) != 4:
-                logger.warning(f"Invalid voice play custom_id format: {custom_id}")
+            if len(parts) < 4:
+                logger.warning(
+                    "Invalid voice play custom_id (expected >=4 segments)",
+                    extra={"custom_id": custom_id, "segments": len(parts)},
+                )
                 await interaction.response.send_message("❌ 无效的按钮操作", ephemeral=True)
                 return
 
-            match_id = parts[3]
+            prefix, scope, action = parts[:3]
+            if prefix != "chimera" or scope != "voice" or action != "play":
+                logger.warning(
+                    "Voice play custom_id prefix mismatch",
+                    extra={
+                        "custom_id": custom_id,
+                        "prefix": prefix,
+                        "scope": scope,
+                        "action": action,
+                    },
+                )
+                await interaction.response.send_message("❌ 无效的按钮操作", ephemeral=True)
+                return
+
+            match_segments = parts[3:]
+            issued_at_ts: int | None = None
+            if len(match_segments) >= 2:
+                potential_ts = match_segments[-1]
+                try:
+                    issued_at_ts = int(potential_ts)
+                    match_segments = match_segments[:-1]
+                except ValueError:
+                    issued_at_ts = None
+                    logger.warning(
+                        "Voice play custom_id timestamp parse failed",
+                        extra={"custom_id": custom_id, "segment": potential_ts},
+                    )
+
+            match_id = ":".join(match_segments) if match_segments else ""
+            if not match_id:
+                logger.warning(
+                    "Voice play custom_id missing match_id segment",
+                    extra={"custom_id": custom_id},
+                )
+                await interaction.response.send_message("❌ 无效的按钮操作", ephemeral=True)
+                return
+
+            if issued_at_ts is not None:
+                ttl_seconds = getattr(self.settings, "voice_button_ttl_seconds", 15 * 60)
+                if time.time() - issued_at_ts > ttl_seconds:
+                    logger.info(
+                        "Voice play interaction expired locally",
+                        extra={"match_id": match_id, "issued_at": issued_at_ts},
+                    )
+                    await interaction.response.send_message(
+                        "⚠️ 语音播报请求已过期，请刷新结果后重新点击。", ephemeral=True
+                    )
+                    return
+
             logger.info(
                 f"Voice play button clicked: match_id={match_id}, user={interaction.user.id}"
             )
@@ -1346,11 +1467,13 @@ class DiscordAdapter:
                 llm_metadata = {}
 
             audio_url = llm_metadata.get("tts_audio_url")
+            personal_summary = _select_personal_tts_summary(llm_metadata)
 
             # 3. If no audio_url, synthesize from narrative
             if not audio_url:
                 narrative = record.get("llm_narrative")
-                if not narrative:
+                speech_source = personal_summary or narrative
+                if not speech_source:
                     logger.warning(f"No narrative available for match_id={match_id}")
                     await interaction.followup.send("❌ 暂无可播报的分析内容", ephemeral=True)
                     return
@@ -1361,14 +1484,21 @@ class DiscordAdapter:
 
                     tts = TTSAdapter()
                     emotion = llm_metadata.get("emotion", "平淡")
-                    audio_url = await tts.synthesize_speech_to_url(narrative, emotion)
+                    tts_options: dict[str, Any] = {}
+                    recommended = llm_metadata.get("tts_recommended_params")
+                    if isinstance(recommended, dict):
+                        tts_options = dict(recommended)
+                    tts_options.setdefault("match_id", match_id)
+                    audio_url = await tts.synthesize_speech_to_url(
+                        speech_source, emotion, options=tts_options
+                    )
 
                     if audio_url:
                         # Update DB with new audio_url
                         updated_metadata = {**llm_metadata, "tts_audio_url": audio_url}
                         await self.db.update_llm_narrative(
                             match_id=match_id,
-                            llm_narrative=narrative,
+                            llm_narrative=narrative or speech_source,
                             llm_metadata=updated_metadata,
                         )
                         logger.info(f"TTS synthesized and saved for match_id={match_id}")
@@ -1413,13 +1543,53 @@ class DiscordAdapter:
                     f"Voice play successful: match_id={match_id}, user={user_id}, "
                     f"elapsed_ms={elapsed_ms:.0f}"
                 )
-                await interaction.followup.send("✅ 已开始在你的语音频道播报", ephemeral=True)
+                try:
+                    await interaction.followup.send(
+                        "✅ 已开始语音播报，记得保持在当前语音频道哦。",
+                        ephemeral=True,
+                    )
+                except Exception:
+                    logger.debug("voice_success_followup_failed", exc_info=True)
             else:
                 logger.warning(
                     f"Voice play failed (user not in voice?): match_id={match_id}, user={user_id}"
                 )
                 await interaction.followup.send("⚠️ 你当前不在任何语音频道", ephemeral=True)
 
+        except discord.NotFound as e:
+            logger.warning(
+                "Voice play interaction token invalid or expired",
+                exc_info=True,
+                extra={"custom_id": custom_id, "error": str(e)},
+            )
+            channel = getattr(interaction, "channel", None)
+            if channel:
+                try:
+                    if audio_url:
+                        await channel.send(f"⚠️ 播报按钮已过期，这是上次生成的语音链接：{audio_url}")
+                    else:
+                        await channel.send("⚠️ 播报请求已过期，请重新运行 /analyze。")
+                except Exception:
+                    pass
+            return
+        except discord.Forbidden as e:
+            logger.warning(
+                "Voice play interaction forbidden by Discord",
+                exc_info=True,
+                extra={"custom_id": custom_id, "error": str(e)},
+            )
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        "⚠️ 无法在当前频道播报，请联系管理员。", ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        "⚠️ 无法在当前频道播报，请联系管理员。", ephemeral=True
+                    )
+            except Exception:
+                pass
+            return
         except Exception as e:
             logger.error(f"Voice play interaction error: {e}", exc_info=True)
             try:
@@ -1428,299 +1598,6 @@ class DiscordAdapter:
                 else:
                     await interaction.response.send_message(
                         "❌ 播报失败，请稍后重试", ephemeral=True
-                    )
-            except Exception:
-                pass
-
-    async def _handle_team_open_pages_interaction(
-        self, interaction: discord.Interaction, custom_id: str
-    ) -> None:
-        """Handle '更多团队页' button to post paginated team pages to the channel.
-
-        custom_id format: team_analysis:open_pages:{match_id}
-        """
-        try:
-            parts = custom_id.split(":")
-            if len(parts) != 3:
-                await interaction.response.send_message(content="❌ 无效的按钮操作", ephemeral=True)
-                return
-            match_id = parts[2]
-
-            # Ack quickly
-            try:
-                await interaction.response.send_message(
-                    content="🧾 正在推送团队详情页…", ephemeral=True
-                )
-            except discord.InteractionResponded:
-                await interaction.followup.send(content="🧾 正在推送团队详情页…", ephemeral=True)
-
-            # Ensure DB connection (bot process runs separate from Celery)
-            try:
-                await self.db.connect()
-            except Exception:
-                pass
-
-            # Load match data & timeline from DB (tolerate json string and fallback to cached scores)
-            match_row = await self.db.get_match_data(match_id)
-            match_details = (match_row or {}).get("match_data") if match_row else None
-            timeline = (match_row or {}).get("timeline_data") if match_row else None
-
-            pages = []
-            try:
-                import json as _json
-                from types import SimpleNamespace
-
-                from src.contracts.timeline import MatchTimeline
-
-                # Detect mode; skip Arena pair pages
-                from src.contracts.v23_multi_mode_analysis import detect_game_mode
-                from src.core.scoring.calculator import generate_llm_input
-                from src.core.views.team_pager import (
-                    TeamPairPagerView,
-                    build_pair_pages,
-                )
-
-                # If DB returned JSON as strings, decode
-                if isinstance(match_details, str):
-                    try:
-                        match_details = _json.loads(match_details)
-                    except Exception:
-                        match_details = None
-                if isinstance(timeline, str):
-                    try:
-                        timeline = _json.loads(timeline)
-                    except Exception:
-                        timeline = None
-
-                if isinstance(match_details, dict):
-                    qid = int((match_details.get("info", {}) or {}).get("queueId", 0) or 0)
-                    gm = detect_game_mode(qid)
-                    if gm.mode == "Arena":
-                        # Build a lightweight Arena专页（Duo + 回合轨迹）并直接发送
-                        try:
-                            from src.core.views.arena_duo_receipt import build_arena_duo_receipt
-
-                            # Duo
-                            parts = (match_details.get("info", {}) or {}).get("participants", [])
-                            target = (
-                                next((p for p in parts if p.get("puuid") == requester_puuid), None)
-                                if "requester_puuid" in locals()
-                                else None
-                            )
-                            # requester_puuid not in scope; fetch from analysis_result
-                            record = await self.db.get_analysis_result(match_id)
-                            score_data = (record or {}).get("score_data")
-                            import json as _json
-
-                            if isinstance(score_data, str):
-                                try:
-                                    score_data = _json.loads(score_data)
-                                except Exception:
-                                    score_data = None
-                            rp = (score_data or {}).get("round_performances") or []
-                            # Minimal duo info from participants (best-effort)
-                            me_name = (
-                                (
-                                    target.get("riotIdGameName")
-                                    or target.get("summonerName")
-                                    or target.get("gameName")
-                                )
-                                if target
-                                else "-"
-                            )
-                            me_champ = target.get("championName") if target else "-"
-                            sub_id = target.get("subteamId") if target else None
-                            partner = (
-                                next(
-                                    (
-                                        p
-                                        for p in parts
-                                        if p.get("subteamId") == sub_id and p is not target
-                                    ),
-                                    None,
-                                )
-                                if sub_id is not None
-                                else None
-                            )
-                            pa_name = (
-                                (
-                                    partner.get("riotIdGameName")
-                                    or partner.get("summonerName")
-                                    or partner.get("gameName")
-                                )
-                                if partner
-                                else None
-                            )
-                            pa_champ = partner.get("championName") if partner else None
-                            placement = target.get("placement") if target else None
-
-                            receipt = build_arena_duo_receipt(
-                                target_name=me_name or "-",
-                                target_champion=me_champ or "-",
-                                partner_name=pa_name,
-                                partner_champion=pa_champ,
-                                placement=int(placement) if placement else None,
-                            )
-                            embed = discord.Embed(
-                                title="⚔️ Arena 专页",
-                                description=f"```\n{receipt}\n```",
-                                color=0x5865F2,
-                            )
-                            # 回合轨迹（压缩序列 + Top-3）
-                            if isinstance(rp, list) and rp:
-                                # Compact sequence
-                                rounds_sorted = sorted(
-                                    [r for r in rp if isinstance(r, dict)],
-                                    key=lambda x: int(x.get("round_number", 0) or 0),
-                                )
-                                seq = []
-                                for r in rounds_sorted:
-                                    tag = str((r.get("round_result") or "").lower())
-                                    seq.append("W" if tag in ("win", "victory", "w") else "L")
-                                comp = []
-                                if seq:
-                                    last = seq[0]
-                                    cnt = 1
-                                    for t in seq[1:]:
-                                        if t == last:
-                                            cnt += 1
-                                        else:
-                                            comp.append(f"{last}{cnt}")
-                                            last = t
-                                            cnt = 1
-                                    comp.append(f"{last}{cnt}")
-                                embed.add_field(
-                                    name="回合轨迹",
-                                    value="轨迹: " + (" ".join(comp) or "-"),
-                                    inline=False,
-                                )
-
-                                # Top-3 events
-                                def _top(key, reverse=True):
-                                    return sorted(
-                                        rounds_sorted,
-                                        key=lambda x: (x.get(key, 0) or 0, x.get("kills", 0)),
-                                        reverse=reverse,
-                                    )[:3]
-
-                                def _line(r):
-                                    return f"R{r.get('round_number')}: {r.get('kills',0)}杀/{r.get('deaths',0)}死, 伤害{r.get('damage_dealt',0)} 承伤{r.get('damage_taken',0)}"
-
-                                top_k = sorted(
-                                    rounds_sorted,
-                                    key=lambda x: (x.get("kills", 0), x.get("damage_dealt", 0)),
-                                    reverse=True,
-                                )[:3]
-                                top_dd = _top("damage_dealt")
-                                top_dt = _top("damage_taken")
-                                lines = []
-                                if top_k:
-                                    lines += ["击杀 Top-3:"] + ["• " + _line(r) for r in top_k]
-                                if top_dd:
-                                    lines += ["输出 Top-3:"] + ["• " + _line(r) for r in top_dd]
-                                if top_dt:
-                                    lines += ["承伤 Top-3:"] + ["• " + _line(r) for r in top_dt]
-                                if lines:
-                                    embed.add_field(
-                                        name="回合事件 Top-3",
-                                        value="\n".join(lines)[:1000],
-                                        inline=False,
-                                    )
-                            await interaction.channel.send(embed=embed)
-                            await interaction.followup.send(
-                                content="✅ 已打开 Arena 专页", ephemeral=True
-                            )
-                        except Exception:
-                            await interaction.followup.send(
-                                content="⚔️ Arena 模式暂不支持对位分页；请查看概览中的 Arena 专页。",
-                                ephemeral=True,
-                            )
-                        return
-
-                if isinstance(match_details, dict) and isinstance(timeline, dict) and timeline:
-                    # Preferred path: recompute from timeline + details
-                    ao = generate_llm_input(MatchTimeline(**timeline), match_details=match_details)
-                    pages = build_pair_pages(match_details, ao)
-                else:
-                    # Fallback path: try cached score_data to build pages without timeline
-                    record = await self.db.get_analysis_result(match_id)
-                    score_data = (record or {}).get("score_data")
-                    if isinstance(score_data, str):
-                        try:
-                            score_data = _json.loads(score_data)
-                        except Exception:
-                            score_data = None
-                    ps_list = (
-                        (score_data or {}).get("player_scores")
-                        if isinstance(score_data, dict)
-                        else None
-                    )
-                    if isinstance(ps_list, list) and ps_list:
-                        # Build a minimal analysis_output-like object
-                        player_scores = []
-                        for ps in ps_list:
-                            try:
-                                player_scores.append(
-                                    SimpleNamespace(
-                                        participant_id=int(ps.get("participant_id", 0) or 0),
-                                        combat_efficiency=float(
-                                            ps.get("combat_efficiency", 0.0) or 0.0
-                                        ),
-                                        economic_management=float(
-                                            ps.get("economic_management", 0.0) or 0.0
-                                        ),
-                                        objective_control=float(
-                                            ps.get("objective_control", 0.0) or 0.0
-                                        ),
-                                        vision_control=float(ps.get("vision_control", 0.0) or 0.0),
-                                        team_contribution=float(
-                                            ps.get("team_contribution", 0.0) or 0.0
-                                        ),
-                                        survivability_score=float(
-                                            ps.get("survivability_score", 0.0) or 0.0
-                                        ),
-                                    )
-                                )
-                            except Exception:
-                                continue
-                        ao_like = SimpleNamespace(player_scores=player_scores)
-
-                        # If match_details missing, synthesize minimal participants from ps_list
-                        if not isinstance(match_details, dict):
-                            participants = []
-                            for ps in player_scores:
-                                participants.append(
-                                    {
-                                        "participantId": int(getattr(ps, "participant_id", 0) or 0),
-                                        "riotIdGameName": f"P{getattr(ps, 'participant_id', 0)}",
-                                        "championName": "-",
-                                    }
-                                )
-                            match_details = {"info": {"participants": participants}}
-
-                        pages = build_pair_pages(match_details, ao_like)
-            except Exception:
-                logger.exception("Failed to build team pages from any source")
-
-            if not pages:
-                await interaction.followup.send(
-                    content="⚠️ 暂无可用的团队数据（尝试读取缓存失败）", ephemeral=True
-                )
-                return
-
-            # Send single interactive pager (no spam)
-            view = TeamPairPagerView(pages)
-            first = view._embed()
-            await interaction.channel.send(embed=first, view=view)
-            await interaction.followup.send(content="✅ 已打开对位分页视图", ephemeral=True)
-        except Exception as e:
-            logger.exception("Failed to push team pages")
-            try:
-                if interaction.response.is_done():
-                    await interaction.followup.send(content=f"❌ 推送失败：{e}", ephemeral=True)
-                else:
-                    await interaction.response.send_message(
-                        content=f"❌ 推送失败：{e}", ephemeral=True
                     )
             except Exception:
                 pass
@@ -1856,7 +1733,7 @@ class DiscordAdapter:
         self,
         *,
         guild_id: int,
-        voice_channel_id: int,
+        voice_channel_id: int | str,
         audio_url: str,
         volume: float = 0.5,
         normalize: bool = False,
@@ -1868,6 +1745,18 @@ class DiscordAdapter:
         - FFmpeg must be installed and available in PATH.
         - Bot must have Connect/Speak permissions in the target channel.
         """
+        normalized_channel_id = _normalize_voice_channel_id(voice_channel_id)
+        if normalized_channel_id is None:
+            logger.error(
+                "Invalid voice channel id",
+                extra={
+                    "guild_id": guild_id,
+                    "voice_channel_id": voice_channel_id,
+                },
+            )
+            return False
+        voice_channel_id = normalized_channel_id
+
         try:
             # [DEV MODE: Validate TTS audio URL]
             import os
@@ -1957,7 +1846,7 @@ class DiscordAdapter:
         self,
         *,
         guild_id: int,
-        voice_channel_id: int,
+        voice_channel_id: int | str,
         audio_bytes: bytes,
         volume: float = 0.5,
         normalize: bool = False,
@@ -1967,6 +1856,18 @@ class DiscordAdapter:
 
         Avoids disk I/O for lower latency.
         """
+        normalized_channel_id = _normalize_voice_channel_id(voice_channel_id)
+        if normalized_channel_id is None:
+            logger.error(
+                "Invalid voice channel id",
+                extra={
+                    "guild_id": guild_id,
+                    "voice_channel_id": voice_channel_id,
+                },
+            )
+            return False
+        voice_channel_id = normalized_channel_id
+
         try:
             import io
 
@@ -2030,54 +1931,6 @@ class DiscordAdapter:
             logger.error(f"Voice bytes playback error: {e}", exc_info=True)
             return False
 
-            # Reuse or create voice client
-            vc: discord.VoiceClient | None = cast(
-                discord.VoiceClient | None,
-                discord.utils.get(self.bot.voice_clients, guild=guild),
-            )
-            if vc and vc.is_connected():
-                if vc.channel.id != channel.id:
-                    await vc.move_to(channel)
-            else:
-                vc = await channel.connect()
-
-            # Prepare FFmpeg source (reconnect flags support HTTP streaming resilience)
-            ff_before = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
-            ff_opts = "-vn"
-            # Optional audio normalization
-            if normalize:
-                ff_opts = f"{ff_opts} -filter:a loudnorm"
-            # Optional duration cap (seconds)
-            if isinstance(max_seconds, int) and max_seconds > 0:
-                ff_opts = f"{ff_opts} -t {max_seconds}"
-
-            source = FFmpegPCMAudio(
-                audio_url,
-                before_options=ff_before,
-                options=ff_opts,
-            )
-            player = discord.PCMVolumeTransformer(source, volume=volume)
-
-            vc.play(player)
-            while vc.is_playing():
-                await asyncio.sleep(1)
-
-            await vc.disconnect()
-            try:
-                elapsed = (asyncio.get_running_loop().time() - playback_start) * 1000
-                logger.info(
-                    "Voice playback finished guild=%s channel=%s ms=%.0f",
-                    guild_id,
-                    voice_channel_id,
-                    elapsed,
-                )
-            except Exception:
-                pass
-            return True
-        except Exception as e:
-            logger.error(f"Voice playback error: {e}", exc_info=True)
-            return False
-
     async def play_tts_to_user_channel(
         self,
         *,
@@ -2112,7 +1965,7 @@ class DiscordAdapter:
         self,
         *,
         guild_id: int,
-        voice_channel_id: int,
+        voice_channel_id: int | str,
         audio_url: str,
         volume: float = 0.5,
         normalize: bool = False,
@@ -2131,6 +1984,18 @@ class DiscordAdapter:
         Returns:
             True if job was successfully enqueued/played, False otherwise
         """
+        normalized_channel_id = _normalize_voice_channel_id(voice_channel_id)
+        if normalized_channel_id is None:
+            logger.error(
+                "Invalid voice channel id",
+                extra={
+                    "guild_id": guild_id,
+                    "voice_channel_id": voice_channel_id,
+                },
+            )
+            return False
+        voice_channel_id = normalized_channel_id
+
         if not self.voice_broadcast:
             # Fallback to direct playback
             logger.info(
@@ -2163,7 +2028,7 @@ class DiscordAdapter:
         self,
         *,
         guild_id: int,
-        voice_channel_id: int,
+        voice_channel_id: int | str,
         audio_bytes: bytes,
         volume: float = 0.5,
         normalize: bool = False,
@@ -2182,6 +2047,18 @@ class DiscordAdapter:
         Returns:
             True if job was successfully enqueued/played, False otherwise
         """
+        normalized_channel_id = _normalize_voice_channel_id(voice_channel_id)
+        if normalized_channel_id is None:
+            logger.error(
+                "Invalid voice channel id",
+                extra={
+                    "guild_id": guild_id,
+                    "voice_channel_id": voice_channel_id,
+                },
+            )
+            return False
+        voice_channel_id = normalized_channel_id
+
         if not self.voice_broadcast:
             logger.info(
                 "voice_broadcast_bytes_unavailable_fallback",

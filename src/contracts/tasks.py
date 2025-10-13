@@ -20,6 +20,9 @@ class AnalysisTaskPayload(BaseModel):
         description="Discord interaction token (15min validity) for editing original response"
     )
     channel_id: str = Field(description="Discord channel ID where command was invoked")
+    guild_id: str | None = Field(
+        default=None, description="Discord guild ID (for voice auto-play); None for DM commands"
+    )
 
     # User identity
     discord_user_id: str = Field(description="Discord user ID who invoked the command")

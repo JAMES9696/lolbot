@@ -27,6 +27,7 @@ from src.core.scoring import generate_llm_input
 from src.core.services.ab_testing import PromptSelectorService
 from src.prompts.v2_team_relative_prompt import V2_TEAM_RELATIVE_SYSTEM_PROMPT
 from src.core.metrics import mark_json_validation_error_by_mode
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +254,7 @@ class SRStrategy(AnalysisStrategy):
                         "llm_latency_ms": llm_latency,
                     }
                 )
-                try:
+                with contextlib.suppress(Exception):
                     mark_json_validation_error_by_mode(
                         "v2_team_analysis",
                         "json_parse_error"
@@ -261,8 +262,6 @@ class SRStrategy(AnalysisStrategy):
                         else "validation_error",
                         self.get_mode_label(),
                     )
-                except Exception:
-                    pass
 
                 # Generate V1 fallback
                 # Include Match-V5 details so raw_stats carries accurate vision_score etc.

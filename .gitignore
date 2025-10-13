@@ -78,3 +78,4 @@ dmypy.json
 
 # Claude Code Configuration (contains API keys)
 .claude/
+static/ddragon_cache/metadata/*.json

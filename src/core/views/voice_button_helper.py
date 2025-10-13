@@ -6,6 +6,7 @@ Implements voice button integration from DISCORD_FRONTEND_IMPLEMENTATION_PROMPT.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import discord
@@ -14,6 +15,15 @@ if TYPE_CHECKING:
     from src.contracts.team_analysis import TeamAnalysisReport
 
 logger = logging.getLogger(__name__)
+
+
+def build_voice_custom_id(match_id: str, issued_at: int | None = None) -> str:
+    """Generate voice play custom_id with timestamp to prevent stale replay.
+
+    Format: ``chimera:voice:play:{match_id}:{issued_at}``
+    """
+    issued = issued_at or int(time.time())
+    return f"chimera:voice:play:{match_id}:{issued}"
 
 
 def add_voice_button_if_available(
@@ -73,7 +83,7 @@ def add_voice_button_if_available(
         style=discord.ButtonStyle.primary,
         label="▶ 播放语音",
         emoji="🔊",
-        custom_id=f"chimera:voice:play:{match_id}",
+        custom_id=build_voice_custom_id(match_id),
         row=row,
     )
     view.add_item(button)

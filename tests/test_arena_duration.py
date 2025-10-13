@@ -8,7 +8,7 @@ from src.config.settings import Settings
 
 async def test_arena_duration():
     """Test that Arena match duration is calculated correctly."""
-    settings = Settings()
+    Settings()
     db = DatabaseAdapter()
     await db.connect()
 

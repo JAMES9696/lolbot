@@ -172,6 +172,25 @@ async def test_trigger_broadcast_channel_id_branch_queued(
 
 
 @pytest.mark.asyncio
+async def test_play_audio_prefers_queue(
+    callback_server: RSOCallbackServer, mock_discord_adapter: Any
+) -> None:
+    """_play_audio 应优先使用队列以避免并发播放冲突。"""
+
+    mock_discord_adapter.voice_broadcast = object()
+
+    ok = await callback_server._play_audio(321, 654, "https://cdn.example.com/audio.mp3")
+
+    assert ok is True
+    mock_discord_adapter.enqueue_tts_playback.assert_awaited_once_with(
+        guild_id=321,
+        voice_channel_id=654,
+        audio_url="https://cdn.example.com/audio.mp3",
+    )
+    mock_discord_adapter.play_tts_in_voice_channel.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_trigger_broadcast_unauthorized(
     callback_server: RSOCallbackServer,
     monkeypatch: Any,
@@ -291,9 +310,12 @@ async def test_broadcast_streaming_prefers_tts_summary(
     captured: dict[str, Any] = {}
 
     class StubTTS:
-        async def synthesize_speech_to_bytes(self, text: str, emotion: str | None) -> bytes:
+        async def synthesize_speech_to_bytes(
+            self, text: str, emotion: str | None, *, options: dict[str, Any] | None = None
+        ) -> bytes:
             captured["text"] = text
             captured["emotion"] = emotion
+            captured["options"] = options or {}
             return b"STREAM"
 
         async def synthesize_speech_to_url(self, *_: Any, **__: Any) -> str:
@@ -303,11 +325,12 @@ async def test_broadcast_streaming_prefers_tts_summary(
 
     callback_server.discord_adapter.voice_broadcast = object()
 
-    ok, msg = await callback_server._broadcast_match_tts(123, 456, "NA1_TEST_MATCH")
+    ok, msg = await callback_server._broadcast_match_tts(123, 456, "NA1_TEST_MATCH", None)
 
     assert ok is True
     assert msg == "stream_enqueued"
     assert captured["text"] == summary_text
+    assert captured["options"]["match_id"] == "NA1_TEST_MATCH"
     mock_discord_adapter.enqueue_tts_playback_bytes.assert_awaited_once()
 
 
@@ -334,23 +357,29 @@ async def test_broadcast_streaming_timeout_fallbacks_to_url(
     captured: dict[str, Any] = {}
 
     class TimeoutTTS:
-        async def synthesize_speech_to_bytes(self, text: str, emotion: str | None) -> bytes:
+        async def synthesize_speech_to_bytes(
+            self, text: str, emotion: str | None, *, options: dict[str, Any] | None = None
+        ) -> bytes:
             raise TTSError("provider timeout")
 
-        async def synthesize_speech_to_url(self, text: str, emotion: str | None) -> str:
+        async def synthesize_speech_to_url(
+            self, text: str, emotion: str | None, *, options: dict[str, Any] | None = None
+        ) -> str:
             captured["text"] = text
             captured["emotion"] = emotion
+            captured["options"] = options or {}
             return "https://cdn.example.com/fallback.mp3"
 
     monkeypatch.setattr("src.api.rso_callback.TTSAdapter", TimeoutTTS)
 
     callback_server.discord_adapter.voice_broadcast = None
 
-    ok, msg = await callback_server._broadcast_match_tts(987, 654, "NA1_TIMEOUT_MATCH")
+    ok, msg = await callback_server._broadcast_match_tts(987, 654, "NA1_TIMEOUT_MATCH", None)
 
     assert ok is True
     assert msg == "ok"
     assert captured["text"] == summary_text
+    assert captured["options"]["match_id"] == "NA1_TIMEOUT_MATCH"
     mock_discord_adapter.play_tts_in_voice_channel.assert_awaited_once_with(
         guild_id=987,
         voice_channel_id=654,
@@ -360,3 +389,31 @@ async def test_broadcast_streaming_timeout_fallbacks_to_url(
     metadata_arg = callback_server.db.update_llm_narrative.await_args.kwargs["llm_metadata"]
     assert metadata_arg["tts_audio_url"] == "https://cdn.example.com/fallback.mp3"
     assert metadata_arg["tts_summary"] == summary_text
+
+
+@pytest.mark.asyncio
+async def test_broadcast_match_user_id_fallbacks_to_user_voice_channel(
+    callback_server: RSOCallbackServer,
+    mock_discord_adapter: Any,
+    monkeypatch: Any,
+) -> None:
+    """When no voice_channel_id is provided, use user_id to resolve voice channel."""
+
+    callback_server.db.get_analysis_result = AsyncMock(
+        return_value={
+            "llm_narrative": "之前已经生成过的播报稿",
+            "llm_metadata": {"tts_audio_url": "https://cdn.example.com/already.mp3"},
+        }
+    )
+    monkeypatch.setattr(callback_server, "_audio_url_exists", AsyncMock(return_value=True))
+
+    ok, msg = await callback_server._broadcast_match_tts(321, -1, "NA1_USER_MATCH", 789)
+
+    assert ok is True
+    assert msg == "ok"
+    mock_discord_adapter.play_tts_to_user_channel.assert_awaited_once_with(
+        guild_id=321,
+        user_id=789,
+        audio_url="https://cdn.example.com/already.mp3",
+    )
+    mock_discord_adapter.play_tts_in_voice_channel.assert_not_called()

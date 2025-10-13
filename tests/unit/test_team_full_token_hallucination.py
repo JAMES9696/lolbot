@@ -344,3 +344,58 @@ def test_full_token_hallucination_triggers_structured_fallback(
     assert isinstance(tldr, str)
     assert "数据缺失" not in tldr
     assert len(tldr) <= 400
+
+
+def test_full_token_adapter_failure_returns_structured_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM 适配器初始化失败时，仍返回结构化摘要而不是“数据加载受限”提示。"""
+
+    class _BrokenGemini:
+        def __init__(self) -> None:
+            raise ValueError("OPENAI_API_KEY missing")
+
+    monkeypatch.setattr(
+        sys.modules["src.adapters.gemini_llm"],
+        "GeminiLLMAdapter",
+        _BrokenGemini,
+    )
+
+    def _stub_generate_llm_input(*_args: Any, **_kwargs: Any) -> _AnalysisOutputStub:
+        players = [
+            _PlayerScoreStub(
+                participant_id=i,
+                total_score=70.0 + (10 - i),
+                combat=66.0 - i / 3,
+                econ=60.0 + (5 - i / 4),
+                vision=48.0 + i / 2,
+                objective=55.0 - i / 5,
+                teamplay=58.5 - i / 6,
+            )
+            for i in range(1, 11)
+        ]
+        return _AnalysisOutputStub(players)
+
+    scoring_stub = types.SimpleNamespace(generate_llm_input=_stub_generate_llm_input)
+    monkeypatch.setitem(sys.modules, "src.core.scoring", scoring_stub)
+    monkeypatch.setattr(team_tasks, "generate_llm_input", _stub_generate_llm_input)
+
+    match_details = _build_match_details()
+    timeline_data = _build_timeline()
+
+    score_data = team_tasks._run_full_token_team_analysis(  # type: ignore[attr-defined]
+        match_details=match_details,
+        timeline_data=timeline_data,
+        requester_puuid="P1",
+    )
+
+    narrative = score_data["ai_narrative_text"]
+    assert "[降级模式]" in narrative
+    assert "OPENAI_API_KEY missing" in narrative
+
+    tldr = score_data.get("tldr")
+    assert isinstance(tldr, str) and len(tldr) > 0
+
+    team_summary = score_data.get("team_summary") or {}
+    assert "fallback_reasons" in team_summary
+    assert "llm_unavailable" in team_summary["fallback_reasons"]

@@ -8,7 +8,7 @@ from src.config.settings import Settings
 
 async def clear_arena_cache():
     """Clear cached analysis for Arena match NA1_5388494924."""
-    settings = Settings()
+    Settings()
     db = DatabaseAdapter()
     await db.connect()
 

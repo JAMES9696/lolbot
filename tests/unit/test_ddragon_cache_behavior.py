@@ -196,6 +196,33 @@ class TestVersionNormalizationCacheInterplay:
         assert url1 == "https://ddragon.leagueoflegends.com/cdn/14.10.1/img/champion/Qiyana.png"
         assert url2 == "https://ddragon.leagueoflegends.com/cdn/14.10.1/img/champion/Ahri.png"
 
+    def test_item_index_normalizes_hint_version(self, monkeypatch: Any) -> None:
+        """验证 DataDragonClient.get_item_index 会将 hint 版本归一化."""
+        from src.core.services.team_builds_enricher import DataDragonClient
+
+        requested_urls: list[str] = []
+
+        def fake_get_json(self: Any, url: str, timeout: float = 3.0) -> Any:
+            requested_urls.append(url)
+            if url.endswith("versions.json"):
+                return ["15.20.1", "15.19.1", "15.18.1"]
+            if "item.json" in url:
+                return {"data": {"1001": {"name": "速度之靴"}}}
+            if "runesReforged.json" in url:
+                return []
+            return {}
+
+        monkeypatch.setattr(DataDragonClient, "_get_json", fake_get_json)
+
+        client = DataDragonClient(locale="zh_CN")
+        items = client.get_item_index(ver="15.19.715.1836")
+        assert items[1001]["name"] == "速度之靴"
+
+        # 校验实际请求的 CDN 路径已经归一化为 15.19.1
+        item_urls = [u for u in requested_urls if "item.json" in u]
+        assert item_urls, "应当发起 item.json 请求"
+        assert any("15.19.1" in u for u in item_urls), "应归一化到 15.19.1"
+
 
 class TestFallbackChainCaching:
     """Fallback链路缓存验证 (Fallback chain caching)."""

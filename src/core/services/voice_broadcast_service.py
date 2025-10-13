@@ -1,7 +1,11 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
+import contextlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.adapters.discord_adapter import DiscordAdapter
 
 
 logger = logging.getLogger(__name__)
@@ -14,9 +18,9 @@ class VoiceJob:
     audio_url: str
     volume: float = 0.5
     normalize: bool = False
-    max_seconds: Optional[int] = None
+    max_seconds: int | None = None
     # Optional in-memory audio payload (mutually exclusive with URL)
-    audio_bytes: Optional[bytes] = None
+    audio_bytes: bytes | None = None
 
 
 class VoiceBroadcastService:
@@ -49,7 +53,7 @@ class VoiceBroadcastService:
         audio_url: str,
         volume: float = 0.5,
         normalize: bool = False,
-        max_seconds: Optional[int] = None,
+        max_seconds: int | None = None,
     ) -> bool:
         """Enqueue a playback job for the guild's single queue.
 
@@ -113,7 +117,7 @@ class VoiceBroadcastService:
         audio_bytes: bytes,
         volume: float = 0.5,
         normalize: bool = False,
-        max_seconds: Optional[int] = None,
+        max_seconds: int | None = None,
     ) -> bool:
         """Enqueue a playback job with in-memory audio bytes.
 
@@ -208,10 +212,8 @@ class VoiceBroadcastService:
             except Exception:
                 logger.exception("Voice worker error while playing guild=%s", guild_id)
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     q.task_done()
-                except Exception:
-                    pass
 
             # Exit worker when queue drains to keep footprint small
             if q.empty():

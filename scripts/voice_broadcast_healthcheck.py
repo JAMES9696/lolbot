@@ -37,7 +37,6 @@ import shutil
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 import aiohttp
 
@@ -57,7 +56,7 @@ class HealthCheckResult:
     check_name: str
     passed: bool
     duration_ms: float
-    error_message: Optional[str] = None
+    error_message: str | None = None
     metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -73,7 +72,7 @@ class HealthCheckResult:
 class VoiceBroadcastHealthChecker:
     """Comprehensive health checker for voice broadcast subsystem."""
 
-    def __init__(self, base_url: str, broadcast_secret: Optional[str] = None):
+    def __init__(self, base_url: str, broadcast_secret: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.broadcast_secret = broadcast_secret
         self.results: list[HealthCheckResult] = []
@@ -186,45 +185,44 @@ class VoiceBroadcastHealthChecker:
                 "X-Api-Resource-Id": "volc.service_type.10029",
             }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    settings.tts_api_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    duration_ms = (datetime.now() - start).total_seconds() * 1000
+            async with aiohttp.ClientSession() as session, session.post(
+                settings.tts_api_url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                duration_ms = (datetime.now() - start).total_seconds() * 1000
 
-                    if resp.status == 200:
-                        # Parse response to ensure it's valid
-                        response_text = await resp.text()
-                        logger.info(
-                            f"✅ Volcengine TTS API auth OK (status={resp.status}, "
-                            f"latency={duration_ms:.1f}ms, response_size={len(response_text)}B)"
-                        )
-                        return HealthCheckResult(
-                            check_name="tts_api_auth",
-                            passed=True,
-                            duration_ms=duration_ms,
-                            metadata={
-                                "status_code": resp.status,
-                                "voice_id": settings.tts_voice_id,
-                                "response_size_bytes": len(response_text),
-                            },
-                        )
-                    else:
-                        error_text = await resp.text()
-                        logger.error(
-                            f"❌ Volcengine TTS API returned {resp.status}: {error_text[:200]}"
-                        )
-                        return HealthCheckResult(
-                            check_name="tts_api_auth",
-                            passed=False,
-                            duration_ms=duration_ms,
-                            error_message=f"API returned {resp.status}",
-                            metadata={"status_code": resp.status, "error": error_text[:200]},
-                        )
-        except asyncio.TimeoutError:
+                if resp.status == 200:
+                    # Parse response to ensure it's valid
+                    response_text = await resp.text()
+                    logger.info(
+                        f"✅ Volcengine TTS API auth OK (status={resp.status}, "
+                        f"latency={duration_ms:.1f}ms, response_size={len(response_text)}B)"
+                    )
+                    return HealthCheckResult(
+                        check_name="tts_api_auth",
+                        passed=True,
+                        duration_ms=duration_ms,
+                        metadata={
+                            "status_code": resp.status,
+                            "voice_id": settings.tts_voice_id,
+                            "response_size_bytes": len(response_text),
+                        },
+                    )
+                else:
+                    error_text = await resp.text()
+                    logger.error(
+                        f"❌ Volcengine TTS API returned {resp.status}: {error_text[:200]}"
+                    )
+                    return HealthCheckResult(
+                        check_name="tts_api_auth",
+                        passed=False,
+                        duration_ms=duration_ms,
+                        error_message=f"API returned {resp.status}",
+                        metadata={"status_code": resp.status, "error": error_text[:200]},
+                    )
+        except TimeoutError:
             duration_ms = (datetime.now() - start).total_seconds() * 1000
             logger.error("❌ Volcengine TTS API timeout (>10s)")
             return HealthCheckResult(
@@ -322,50 +320,49 @@ class VoiceBroadcastHealthChecker:
         payload = {"match_id": match_id, "guild_id": guild_id, "user_id": user_id}
 
         try:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.post(
-                    f"{self.base_url}/broadcast",
-                    headers=headers,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    text = await resp.text()
-                    duration_ms = (datetime.now() - start).total_seconds() * 1000
+            async with aiohttp.ClientSession() as sess, sess.post(
+                f"{self.base_url}/broadcast",
+                headers=headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                text = await resp.text()
+                duration_ms = (datetime.now() - start).total_seconds() * 1000
 
-                    if resp.status in (200, 202):
-                        logger.info(
-                            f"✅ /broadcast endpoint OK (status={resp.status}, "
-                            f"latency={duration_ms:.1f}ms)"
-                        )
-                        return HealthCheckResult(
-                            check_name="broadcast_endpoint",
-                            passed=True,
-                            duration_ms=duration_ms,
-                            metadata={
-                                "status_code": resp.status,
-                                "response": text[:200],
-                                "match_id": match_id,
-                            },
-                        )
-                    elif resp.status == 401:
-                        logger.error("❌ /broadcast returned 401 (check X-Auth-Token)")
-                        return HealthCheckResult(
-                            check_name="broadcast_endpoint",
-                            passed=False,
-                            duration_ms=duration_ms,
-                            error_message="Authentication failed (401)",
-                            metadata={"status_code": resp.status},
-                        )
-                    else:
-                        logger.error(f"❌ /broadcast returned {resp.status}: {text[:200]}")
-                        return HealthCheckResult(
-                            check_name="broadcast_endpoint",
-                            passed=False,
-                            duration_ms=duration_ms,
-                            error_message=f"Unexpected status {resp.status}",
-                            metadata={"status_code": resp.status, "response": text[:200]},
-                        )
-        except asyncio.TimeoutError:
+                if resp.status in (200, 202):
+                    logger.info(
+                        f"✅ /broadcast endpoint OK (status={resp.status}, "
+                        f"latency={duration_ms:.1f}ms)"
+                    )
+                    return HealthCheckResult(
+                        check_name="broadcast_endpoint",
+                        passed=True,
+                        duration_ms=duration_ms,
+                        metadata={
+                            "status_code": resp.status,
+                            "response": text[:200],
+                            "match_id": match_id,
+                        },
+                    )
+                elif resp.status == 401:
+                    logger.error("❌ /broadcast returned 401 (check X-Auth-Token)")
+                    return HealthCheckResult(
+                        check_name="broadcast_endpoint",
+                        passed=False,
+                        duration_ms=duration_ms,
+                        error_message="Authentication failed (401)",
+                        metadata={"status_code": resp.status},
+                    )
+                else:
+                    logger.error(f"❌ /broadcast returned {resp.status}: {text[:200]}")
+                    return HealthCheckResult(
+                        check_name="broadcast_endpoint",
+                        passed=False,
+                        duration_ms=duration_ms,
+                        error_message=f"Unexpected status {resp.status}",
+                        metadata={"status_code": resp.status, "response": text[:200]},
+                    )
+        except TimeoutError:
             duration_ms = (datetime.now() - start).total_seconds() * 1000
             logger.error("❌ /broadcast timeout (>15s)")
             return HealthCheckResult(
@@ -388,9 +385,9 @@ class VoiceBroadcastHealthChecker:
         self,
         full_check: bool = False,
         test_broadcast: bool = False,
-        match_id: Optional[str] = None,
-        guild_id: Optional[int] = None,
-        user_id: Optional[int] = None,
+        match_id: str | None = None,
+        guild_id: int | None = None,
+        user_id: int | None = None,
     ) -> int:
         """Run all health checks and return exit code.
 

@@ -1,13 +1,10 @@
-from typing import Optional
-
-
 def build_arena_duo_receipt(
     *,
     target_name: str,
     target_champion: str,
-    partner_name: Optional[str],
-    partner_champion: Optional[str],
-    placement: Optional[int],
+    partner_name: str | None,
+    partner_champion: str | None,
+    placement: int | None,
 ) -> str:
     title = "[RECEIPT] DUO | ARENA"
     line = "+" + "-" * 54 + "+"

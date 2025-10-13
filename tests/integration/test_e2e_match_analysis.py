@@ -43,7 +43,6 @@ async def test_e2e_match_analysis():
     # Test configuration
     test_summoner = "Fuji shan xia"
     test_tag = "NA1"
-    test_region = "na1"
     test_continent = "americas"
 
     try:
@@ -183,13 +182,11 @@ async def test_e2e_match_analysis():
                     print(f"   Status: {resp.status}")
                     print("   (Will use simplified scoring without timeline)")
                     timeline_data = None
-                    has_timeline = False
                 else:
                     timeline_data = await resp.json()
                     print("✅ Timeline data fetched")
                     frames_count = len(timeline_data.get("info", {}).get("frames", []))
                     print(f"   Total Frames: {frames_count}")
-                    has_timeline = True
 
         # ========================================
         # PHASE 4: Calculate V1 Scores

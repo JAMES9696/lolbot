@@ -10,6 +10,7 @@ instrumentation across modules.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from src.config.settings import get_settings
@@ -95,6 +96,13 @@ chimera_external_api_errors_total = Counter(  # type: ignore[call-arg]
     registry=_registry,
 )
 
+chimera_riot_api_requests_total = Counter(  # type: ignore[call-arg]
+    "chimera_riot_api_requests_total",
+    "Riot API requests by endpoint and status",
+    labelnames=("endpoint", "status"),
+    registry=_registry,
+)
+
 # ============================================================================
 # Gauges (dynamic)
 # ============================================================================
@@ -133,10 +141,8 @@ def mark_request_outcome(endpoint: str, status: str) -> None:
     """
     if not _PROMETHEUS_AVAILABLE:
         return
-    try:
+    with contextlib.suppress(Exception):
         chimera_analyze_requests_total.labels(status=status, mode=endpoint).inc()  # type: ignore
-    except Exception:
-        pass
 
 
 def observe_request_latency(endpoint: str, duration_seconds: float) -> None:
@@ -148,12 +154,10 @@ def observe_request_latency(endpoint: str, duration_seconds: float) -> None:
     """
     if not _PROMETHEUS_AVAILABLE:
         return
-    try:
+    with contextlib.suppress(Exception):
         chimera_request_duration_seconds.labels(endpoint=endpoint, status="success").observe(  # type: ignore
             duration_seconds
         )
-    except Exception:
-        pass
 
 
 def mark_llm(status: str, model: str, mode: str = "default") -> None:
@@ -166,20 +170,16 @@ def mark_llm(status: str, model: str, mode: str = "default") -> None:
     """
     if not _PROMETHEUS_AVAILABLE:
         return
-    try:
+    with contextlib.suppress(Exception):
         chimera_llm_tokens_total.labels(type=status, model=model, mode=mode).inc()  # type: ignore
-    except Exception:
-        pass
 
 
 def mark_riot_429() -> None:
     """Mark Riot API rate limit hit."""
     if not _PROMETHEUS_AVAILABLE:
         return
-    try:
+    with contextlib.suppress(Exception):
         chimera_external_api_errors_total.labels(service="riot", error_type="429").inc()  # type: ignore
-    except Exception:
-        pass
 
 
 def mark_json_validation_error(schema: str, error_type: str) -> None:
@@ -191,17 +191,13 @@ def mark_json_validation_error(schema: str, error_type: str) -> None:
     """
     if not _PROMETHEUS_AVAILABLE:
         return
-    try:
+    with contextlib.suppress(Exception):
         chimera_json_validation_errors_total_by_mode.labels(  # type: ignore
             schema=schema, error=error_type, mode="unknown", game_mode="unknown"
         ).inc()
-    except Exception:
-        pass
 
 
-def mark_json_validation_error_by_mode(
-    schema: str, error_type: str, game_mode: str
-) -> None:
+def mark_json_validation_error_by_mode(schema: str, error_type: str, game_mode: str) -> None:
     """Mark JSON validation error with game mode.
 
     Args:
@@ -211,12 +207,99 @@ def mark_json_validation_error_by_mode(
     """
     if not _PROMETHEUS_AVAILABLE:
         return
-    try:
+    with contextlib.suppress(Exception):
         chimera_json_validation_errors_total_by_mode.labels(  # type: ignore
             schema=schema, error=error_type, mode=game_mode, game_mode=game_mode
         ).inc()
-    except Exception:
-        pass
+
+
+def add_llm_cost_usd(model: str, cost_usd: float) -> None:
+    """Add LLM API cost in USD.
+
+    Args:
+        model: Model name (e.g., 'gemini-pro')
+        cost_usd: Cost in USD
+    """
+    if not _PROMETHEUS_AVAILABLE:
+        return
+    with contextlib.suppress(Exception):
+        chimera_llm_cost_usd_total_by_mode.labels(model=model, game_mode="default").inc(cost_usd)  # type: ignore
+
+
+def add_llm_cost_usd_by_mode(model: str, game_mode: str, cost_usd: float) -> None:
+    """Add LLM API cost in USD by game mode.
+
+    Args:
+        model: Model name
+        game_mode: Game mode label
+        cost_usd: Cost in USD
+    """
+    if not _PROMETHEUS_AVAILABLE:
+        return
+    with contextlib.suppress(Exception):
+        chimera_llm_cost_usd_total_by_mode.labels(model=model, game_mode=game_mode).inc(cost_usd)  # type: ignore
+
+
+def add_llm_tokens(token_type: str, model: str, count: int) -> None:
+    """Add LLM token usage.
+
+    Args:
+        token_type: Token type ('input' or 'output')
+        model: Model name
+        count: Number of tokens
+    """
+    if not _PROMETHEUS_AVAILABLE:
+        return
+    with contextlib.suppress(Exception):
+        chimera_llm_tokens_total.labels(type=token_type, model=model, mode="default").inc(count)  # type: ignore
+
+
+def add_llm_tokens_by_mode(token_type: str, model: str, game_mode: str, count: int) -> None:
+    """Add LLM token usage by game mode.
+
+    Args:
+        token_type: Token type ('input' or 'output')
+        model: Model name
+        game_mode: Game mode label
+        count: Number of tokens
+    """
+    if not _PROMETHEUS_AVAILABLE:
+        return
+    with contextlib.suppress(Exception):
+        chimera_llm_tokens_total.labels(type=token_type, model=model, mode=game_mode).inc(count)  # type: ignore
+
+
+def observe_llm_latency(model: str, duration_seconds: float) -> None:
+    """Observe LLM request latency.
+
+    Args:
+        model: Model name
+        duration_seconds: Request duration in seconds
+    """
+    if not _PROMETHEUS_AVAILABLE:
+        return
+    with contextlib.suppress(Exception):
+        chimera_request_duration_seconds.labels(endpoint=f"llm_{model}", status="success").observe(  # type: ignore
+            duration_seconds
+        )
+
+
+def observe_llm_latency_by_mode(model: str, game_mode: str, duration_seconds: float) -> None:
+    """Observe LLM request latency by game mode.
+
+    Args:
+        model: Model name
+        game_mode: Game mode label
+        duration_seconds: Request duration in seconds
+    """
+    if not _PROMETHEUS_AVAILABLE:
+        return
+    with contextlib.suppress(Exception):
+        chimera_request_duration_seconds.labels(
+            endpoint=f"llm_{model}_{game_mode}", status="success"
+        ).observe(  # type: ignore
+            duration_seconds
+        )
 
 
 def observe_analyze_e2e(total_ms: float | None, stages_ms: dict[str, float | None]) -> None:

@@ -48,30 +48,29 @@ async def test_gemini_api():
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 200},
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{url}?key={settings.gemini_api_key}", headers=headers, json=payload
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    print(f"❌ Gemini API error {response.status}: {error_text}")
-                    return False
+        async with aiohttp.ClientSession() as session, session.post(
+            f"{url}?key={settings.gemini_api_key}", headers=headers, json=payload
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                print(f"❌ Gemini API error {response.status}: {error_text}")
+                return False
 
-                data = await response.json()
+            data = await response.json()
 
-                # Extract generated text
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    print("❌ No response from Gemini")
-                    return False
+            # Extract generated text
+            candidates = data.get("candidates", [])
+            if not candidates:
+                print("❌ No response from Gemini")
+                return False
 
-                text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            text = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
 
-                print("✅ Gemini API响应成功")
-                print("\n📝 生成的分析内容:")
-                print("-" * 70)
-                print(text)
-                print("-" * 70)
+            print("✅ Gemini API响应成功")
+            print("\n📝 生成的分析内容:")
+            print("-" * 70)
+            print(text)
+            print("-" * 70)
 
         # Test Match Timeline API
         print("\n🔍 Step 2: Testing Match Timeline API...")

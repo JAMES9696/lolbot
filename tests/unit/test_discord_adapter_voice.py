@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from src.core.views.voice_button_helper import build_voice_custom_id
 
 
 @pytest.fixture
@@ -214,6 +215,27 @@ async def test_play_tts_to_user_channel_user_not_in_voice(mock_discord_bot: Any)
 
 
 @pytest.mark.asyncio
+async def test_play_tts_in_voice_channel_rejects_invalid_channel() -> None:
+    """Ensure invalid voice channel IDs short-circuit before Discord calls."""
+    from src.adapters.discord_adapter import DiscordAdapter
+
+    adapter = DiscordAdapter(
+        rso_adapter=MagicMock(),
+        db_adapter=MagicMock(),
+    )
+    adapter.bot = MagicMock()
+
+    result = await adapter.play_tts_in_voice_channel(
+        guild_id=123,
+        voice_channel_id="-1",
+        audio_url="https://cdn.example.com/invalid.mp3",
+    )
+
+    assert result is False
+    adapter.bot.get_guild.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_play_tts_to_user_channel_handles_exceptions(mock_discord_bot: Any) -> None:
     """Verify play_tts_to_user_channel gracefully handles exceptions."""
     from src.adapters.discord_adapter import DiscordAdapter
@@ -259,6 +281,7 @@ async def test_handle_voice_play_interaction_success(mock_discord_bot: Any) -> N
         settings.voice_volume_default = 0.5
         settings.voice_normalize_default = False
         settings.voice_max_seconds_default = 90
+        settings.voice_button_ttl_seconds = 900
         mock_get_settings.return_value = settings
         adapter.settings = settings
 
@@ -279,9 +302,10 @@ async def test_handle_voice_play_interaction_success(mock_discord_bot: Any) -> N
         interaction.guild.id = 123
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
+        interaction.delete_original_response = AsyncMock()
 
         # Call handler
-        custom_id = "chimera:voice:play:NA1_12345"
+        custom_id = build_voice_custom_id("NA1_12345")
         await adapter._handle_voice_play_interaction(interaction, custom_id)
 
         # Verify interaction was acknowledged
@@ -300,11 +324,59 @@ async def test_handle_voice_play_interaction_success(mock_discord_bot: Any) -> N
             max_seconds=90,
         )
 
-        # Verify success response
+        # Verify success response keeps embed but acknowledges the user
+        interaction.delete_original_response.assert_not_called()
         interaction.followup.send.assert_called_once()
-        call_args = interaction.followup.send.call_args
-        assert "✅" in call_args.args[0]
-        assert call_args.kwargs["ephemeral"] is True
+        success_args, success_kwargs = interaction.followup.send.call_args
+        assert "✅" in success_args[0]
+        assert success_kwargs.get("ephemeral") is True
+
+
+@pytest.mark.asyncio
+async def test_handle_voice_play_interaction_supports_colon_match_id(
+    mock_discord_bot: Any,
+) -> None:
+    """Voice handler should accept match_ids containing colon segments."""
+    from src.adapters.discord_adapter import DiscordAdapter
+
+    adapter = DiscordAdapter(
+        rso_adapter=MagicMock(),
+        db_adapter=MagicMock(),
+    )
+    adapter.bot = mock_discord_bot
+
+    from unittest.mock import patch
+
+    with patch("src.adapters.discord_adapter.get_settings") as mock_get_settings:
+        settings = MagicMock()
+        settings.voice_volume_default = 0.5
+        settings.voice_normalize_default = False
+        settings.voice_max_seconds_default = 90
+        settings.voice_button_ttl_seconds = 900
+        mock_get_settings.return_value = settings
+        adapter.settings = settings
+
+        adapter.db.get_analysis_result = AsyncMock(
+            return_value={
+                "llm_metadata": {"tts_audio_url": "https://cdn.example.com/audio.mp3"},
+                "llm_narrative": "Test narrative",
+            }
+        )
+        adapter.play_tts_to_user_channel = AsyncMock(return_value=True)
+
+        interaction = MagicMock()
+        interaction.user.id = 111
+        interaction.guild.id = 222
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        complex_match_id = "discord:1426318174101438554:155041:analyze_v1"
+        custom_id = build_voice_custom_id(complex_match_id)
+
+        await adapter._handle_voice_play_interaction(interaction, custom_id)
+
+        adapter.db.get_analysis_result.assert_called_once_with(complex_match_id)
+        adapter.play_tts_to_user_channel.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -329,6 +401,7 @@ async def test_handle_voice_play_interaction_synthesize_on_missing_audio(
         settings.voice_volume_default = 0.5
         settings.voice_normalize_default = False
         settings.voice_max_seconds_default = 90
+        settings.voice_button_ttl_seconds = 900
         mock_get_settings.return_value = settings
         adapter.settings = settings
 
@@ -359,13 +432,15 @@ async def test_handle_voice_play_interaction_synthesize_on_missing_audio(
             interaction.followup.send = AsyncMock()
 
             # Call handler
-            custom_id = "chimera:voice:play:NA1_12345"
+            custom_id = build_voice_custom_id("NA1_12345")
             await adapter._handle_voice_play_interaction(interaction, custom_id)
 
             # Verify TTS was synthesized
-            mock_tts.synthesize_speech_to_url.assert_called_once_with(
-                "Test narrative for synthesis", "激动"
-            )
+            mock_tts.synthesize_speech_to_url.assert_called_once()
+            call_args = mock_tts.synthesize_speech_to_url.call_args
+            assert call_args.args[0] == "Test narrative for synthesis"
+            assert call_args.args[1] == "激动"
+            assert call_args.kwargs["options"]["match_id"] == "NA1_12345"
 
             # Verify DB was updated with new audio_url
             adapter.db.update_llm_narrative.assert_called_once()
@@ -400,6 +475,7 @@ async def test_handle_voice_play_interaction_user_not_in_voice(mock_discord_bot:
         settings.voice_volume_default = 0.5
         settings.voice_normalize_default = False
         settings.voice_max_seconds_default = 90
+        settings.voice_button_ttl_seconds = 900
         mock_get_settings.return_value = settings
         adapter.settings = settings
 
@@ -422,7 +498,7 @@ async def test_handle_voice_play_interaction_user_not_in_voice(mock_discord_bot:
         interaction.followup.send = AsyncMock()
 
         # Call handler
-        custom_id = "chimera:voice:play:NA1_12345"
+        custom_id = build_voice_custom_id("NA1_12345")
         await adapter._handle_voice_play_interaction(interaction, custom_id)
 
         # Verify warning response

@@ -9,7 +9,7 @@ from src.config.settings import Settings
 
 async def clear_all_arena_data():
     """Clear all cached data for Arena match NA1_5388494924."""
-    settings = Settings()
+    Settings()
     db = DatabaseAdapter()
     redis = RedisAdapter()
 

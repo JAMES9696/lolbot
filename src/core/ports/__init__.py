@@ -76,10 +76,20 @@ class DatabasePort(ABC):
         pass
 
     @abstractmethod
+    async def list_user_bindings(self) -> list[dict[str, Any]]:
+        """List all user bindings for downstream workflows."""
+        pass
+
+    @abstractmethod
     async def save_match_data(
         self, match_id: str, match_data: dict[str, Any], timeline_data: dict[str, Any]
     ) -> bool:
         """Save match and timeline data to database."""
+        pass
+
+    @abstractmethod
+    async def get_analysis_result(self, match_id: str) -> dict[str, Any] | None:
+        """Retrieve stored analysis record for match."""
         pass
 
     @abstractmethod
@@ -116,6 +126,26 @@ class LLMPort(ABC):
         pass
 
 
+class GuildResolverPort(ABC):
+    """Resolve active guilds for a Discord user."""
+
+    @abstractmethod
+    async def get_user_guilds(self, user_id: int) -> list[int]:
+        """Return guild IDs where the user is currently known."""
+        pass
+
+
+class VoiceBroadcastPort(ABC):
+    """Trigger Discord voice playback for synthesized audio."""
+
+    @abstractmethod
+    async def broadcast_to_user(
+        self, *, guild_id: int, user_id: int, match_id: str
+    ) -> tuple[bool, str]:
+        """Broadcast match narration to a user's current voice channel."""
+        pass
+
+
 class TTSPort(ABC):
     """Port for Text-to-Speech operations.
 
@@ -124,13 +154,20 @@ class TTSPort(ABC):
     """
 
     @abstractmethod
-    async def synthesize_speech_to_url(self, text: str, emotion: str | None = None) -> str | None:
+    async def synthesize_speech_to_url(
+        self,
+        text: str,
+        emotion: str | None = None,
+        *,
+        options: dict[str, Any] | None = None,
+    ) -> str | None:
         """Convert text to speech and upload to CDN/S3.
 
         Args:
             text: Narrative text to convert to speech (max ~1900 chars)
             emotion: Optional emotion tag for voice modulation
                      ('激动', '遗憾', '嘲讽', '鼓励', '平淡')
+            options: Optional synthesis parameters (speed/pitch/voice metadata)
 
         Returns:
             Public URL to the generated audio file (MP3/OGG format)

@@ -66,6 +66,21 @@ class GeminiLLMAdapter(LLMPort):
         2) If OPENAI_API_BASE and OPENAI_API_KEY are set → OpenAI-compatible
         3) Otherwise → Gemini SDK (requires GEMINI_API_KEY)
         """
+        self._candidate_models: list[str] = []
+        self._active_model_name: str | None = None
+        self._active_model_index: int = 0
+        self._gemini_models_initialized = False
+
+        gemini_api_key = getattr(settings, "gemini_api_key", None)
+        if gemini_api_key:
+            genai.configure(api_key=gemini_api_key)
+            for candidate in (
+                settings.gemini_model,
+                "gemini-2.5-pro",
+            ):
+                if candidate and candidate not in self._candidate_models:
+                    self._candidate_models.append(candidate)
+
         self._provider: str = (
             (settings.llm_provider or "gemini").strip().lower()
             if hasattr(settings, "llm_provider")
@@ -82,41 +97,235 @@ class GeminiLLMAdapter(LLMPort):
             self._provider = "openai"
 
         if self._provider == "openai":
-            # OpenAI-compatible path (OhMyGPT reverse proxy)
             if not settings.openai_api_key or not settings.openai_api_base:
                 raise ValueError(
                     "OPENAI_API_KEY and OPENAI_API_BASE must be configured for OpenAI-compatible provider"
                 )
             self.model = None
             self.model_json = None
+            self._active_model_name = settings.openai_model or "openai"
             logger.info(
                 f"LLM provider=openai base={settings.openai_api_base} model={settings.openai_model or 'unset'}"
             )
         else:
-            # Gemini path
-            if not settings.gemini_api_key:
+            if not gemini_api_key:
                 raise ValueError(
                     "GEMINI_API_KEY not configured. Set environment variable or update .env file."
                 )
-            genai.configure(api_key=settings.gemini_api_key)
-            self.model = genai.GenerativeModel(
-                model_name=settings.gemini_model,
-                generation_config={
-                    "temperature": settings.gemini_temperature,
-                    "max_output_tokens": settings.gemini_max_output_tokens,
-                },
-            )
-            self.model_json = genai.GenerativeModel(
-                model_name=settings.gemini_model,
-                generation_config={
-                    "temperature": settings.gemini_temperature,
-                    "max_output_tokens": settings.gemini_max_output_tokens,
-                    "response_mime_type": "application/json",
-                },
-            )
+            if not self._candidate_models:
+                raise ValueError("No Gemini models available for initialization")
+
+            self._active_model_name = self._candidate_models[self._active_model_index]
+            self.model = None
+            self.model_json = None
+            self._initialize_gemini_models(self._active_model_name)
             logger.info(
-                f"LLM provider=gemini model={settings.gemini_model} temperature={settings.gemini_temperature}"
+                f"LLM provider=gemini model={self._active_model_name} temperature={settings.gemini_temperature}"
             )
+
+    def _initialize_gemini_models(self, model_name: str) -> None:
+        """Instantiate Gemini text/JSON models for the given model name."""
+
+        self.model = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config={
+                "temperature": settings.gemini_temperature,
+                "max_output_tokens": settings.gemini_max_output_tokens,
+            },
+        )
+        self.model_json = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config={
+                "temperature": settings.gemini_temperature,
+                "max_output_tokens": settings.gemini_max_output_tokens,
+                "response_mime_type": "application/json",
+            },
+        )
+        self._active_model_name = model_name
+        self._gemini_models_initialized = True
+        logger.debug("Gemini model initialized", extra={"model": model_name})
+
+    def _maybe_switch_gemini_model(self, error_message: str) -> bool:
+        """Attempt to switch to the next Gemini model candidate when available."""
+
+        if self._provider != "gemini":
+            return False
+
+        lowered = error_message.lower()
+        if "not found" not in lowered and "404" not in lowered:
+            return False
+
+        if self._active_model_index + 1 < len(self._candidate_models):
+            next_index = self._active_model_index + 1
+            next_model = self._candidate_models[next_index]
+            logger.warning(
+                "Gemini model unavailable, switching",
+                extra={
+                    "previous_model": self._active_model_name,
+                    "next_model": next_model,
+                    "reason": error_message,
+                },
+            )
+            self._active_model_index = next_index
+            self._initialize_gemini_models(next_model)
+            return True
+
+        openai_base = getattr(settings, "openai_api_base", None)
+        openai_key = getattr(settings, "openai_api_key", None)
+        if openai_base and openai_key:
+            logger.warning(
+                "All Gemini models unavailable, switching to reverse proxy",
+                extra={
+                    "previous_model": self._active_model_name,
+                    "reverse_proxy_base": openai_base,
+                    "reason": error_message,
+                },
+            )
+            self._provider = "openai"
+            self.model = None
+            self.model_json = None
+            self._active_model_name = settings.openai_model or "openai-proxy"
+            return True
+
+        return False
+
+    async def _call_openai_chat_completion(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str,
+        game_mode: str | None,
+    ) -> str:
+        """Invoke OpenAI-compatible Chat Completions endpoint via reverse proxy."""
+
+        import aiohttp
+
+        url = f"{settings.openai_api_base.rstrip('/')}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": settings.openai_model or "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": float(getattr(settings, "openai_temperature", 0.7)),
+            "max_tokens": int(getattr(settings, "openai_max_tokens", 1024)),
+        }
+        base_delay = 1.0
+        model_label = self._active_model_name or settings.openai_model or "openai"
+
+        async with aiohttp.ClientSession() as session:
+            for attempt in range(3):
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    if resp.status == 429:
+                        retry_after = resp.headers.get("Retry-After")
+                        delay = float(retry_after) if retry_after else base_delay * (2**attempt)
+                        await asyncio.sleep(delay)
+                        continue
+                    if resp.status != 200:
+                        text = await resp.text()
+                        raise GeminiAPIError(f"OpenAI-compatible API error {resp.status}: {text}")
+
+                    data = await resp.json()
+                    choices = data.get("choices") or []
+                    if not choices:
+                        raise GeminiAPIError("OpenAI-compatible API returned no choices")
+
+                    content = (choices[0].get("message") or {}).get("content")
+                    if not content:
+                        raise GeminiAPIError("OpenAI-compatible API returned empty content")
+
+                    narrative = str(content).strip()
+                    try:
+                        usage = data.get("usage") or {}
+                        in_tok = usage.get("prompt_tokens")
+                        out_tok = usage.get("completion_tokens")
+                        add_llm_tokens(model_label, prompt=in_tok, completion=out_tok)
+                        if game_mode:
+                            add_llm_tokens_by_mode(model_label, game_mode, in_tok, out_tok)
+                        cost = 0.0
+                        if in_tok:
+                            cost += (in_tok / 1000.0) * settings.finops_prompt_token_price_usd
+                        if out_tok:
+                            cost += (out_tok / 1000.0) * settings.finops_completion_token_price_usd
+                        if cost:
+                            add_llm_cost_usd(model_label, cost)
+                            if game_mode:
+                                add_llm_cost_usd_by_mode(model_label, game_mode, cost)
+                    except Exception:
+                        pass
+
+                    return narrative
+
+        raise GeminiAPIError("OpenAI-compatible API rate limit retries exhausted")
+
+    def _maybe_switch_from_openai(self, error_message: str) -> bool:
+        """Switch from reverse-proxy OpenAI provider back to Gemini when possible."""
+
+        if self._provider != "openai":
+            return False
+
+        if not self._candidate_models:
+            return False
+
+        logger.warning(
+            "Reverse proxy unavailable, falling back to Gemini",
+            extra={
+                "previous_provider": "openai",
+                "fallback_model": self._candidate_models[0],
+                "reason": error_message,
+            },
+        )
+
+        self._provider = "gemini"
+        self._active_model_index = 0
+        self._initialize_gemini_models(self._candidate_models[self._active_model_index])
+        return True
+
+    async def _call_openai_json_completion(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str,
+    ) -> dict[str, Any]:
+        """Invoke OpenAI-compatible endpoint with JSON schema response."""
+
+        import aiohttp
+        import json as _json
+
+        url = f"{settings.openai_api_base.rstrip('/')}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": settings.openai_model or "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": float(getattr(settings, "openai_temperature", 0.7)),
+            "max_tokens": int(getattr(settings, "openai_max_tokens", 1024)),
+            "response_format": {"type": "json_object"},
+        }
+
+        async with (
+            aiohttp.ClientSession() as session,
+            session.post(url, headers=headers, json=payload) as resp,
+        ):
+            if resp.status != 200:
+                text = await resp.text()
+                raise GeminiAPIError(f"OpenAI-compatible API error {resp.status}: {text}")
+
+            data = await resp.json()
+            content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content")
+            if not content:
+                raise GeminiAPIError("OpenAI-compatible API returned empty JSON content")
+
+            return _json.loads(content)
 
     async def analyze_match(
         self,
@@ -185,85 +394,54 @@ class GeminiLLMAdapter(LLMPort):
                 if random.random() < chaos_error_rate:
                     raise GeminiAPIError("Injected chaos error (LLM)")
 
+            response: Any | None = None
             t0 = time.perf_counter()
-            if self._provider == "openai":
-                import aiohttp
+            while True:
+                try:
+                    if self._provider == "openai":
+                        narrative = await self._call_openai_chat_completion(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            game_mode=game_mode,
+                        )
+                        response = None
+                        break
 
-                url = f"{settings.openai_api_base.rstrip('/')}/v1/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {settings.openai_api_key}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "model": settings.openai_model or "gpt-4o-mini",
-                    "messages": [
-                        {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": float(getattr(settings, "openai_temperature", 0.7)),
-                    "max_tokens": int(getattr(settings, "openai_max_tokens", 1024)),
-                }
-                base_delay = 1.0
-                async with aiohttp.ClientSession() as session:
-                    for attempt in range(3):
-                        async with session.post(url, headers=headers, json=payload) as resp:
-                            if resp.status == 429:
-                                retry_after = resp.headers.get("Retry-After")
-                                if retry_after:
-                                    delay = float(retry_after)
-                                else:
-                                    delay = base_delay * (2**attempt)
-                                await asyncio.sleep(delay)
-                                continue
-                            elif resp.status != 200:
-                                text = await resp.text()
-                                raise GeminiAPIError(
-                                    f"OpenAI-compatible API error {resp.status}: {text}"
-                                )
-                            data = await resp.json()
-                            choices = data.get("choices") or []
-                            if not choices:
-                                raise GeminiAPIError("OpenAI-compatible API returned no choices")
-                            content = (choices[0].get("message") or {}).get("content")
-                            if not content:
-                                raise GeminiAPIError("OpenAI-compatible API returned empty content")
-                            narrative = str(content).strip()
-                            try:
-                                usage = data.get("usage") or {}
-                                in_tok = usage.get("prompt_tokens")
-                                out_tok = usage.get("completion_tokens")
-                                add_llm_tokens(
-                                    settings.openai_model or "openai",
-                                    prompt=in_tok,
-                                    completion=out_tok,
-                                )
-                                if game_mode:
-                                    add_llm_tokens_by_mode(
-                                        settings.openai_model or "openai",
-                                        game_mode,
-                                        in_tok,
-                                        out_tok,
-                                    )
-                            except Exception:
-                                pass
-                            break
-                    else:
-                        raise GeminiAPIError("OpenAI-compatible API rate limit retries exhausted")
-            else:
-                # Call Gemini API in thread pool (SDK is synchronous)
-                response = await asyncio.to_thread(self.model.generate_content, prompt)
-                if not response or not response.text:
-                    raise GeminiAPIError("Empty response from Gemini API")
-                narrative = response.text.strip()
-                try:  # google SDK: usage metadata may exist
+                    content = [
+                        {
+                            "role": "system",
+                            "parts": [system_prompt or DEFAULT_SYSTEM_PROMPT],
+                        },
+                        {"role": "user", "parts": [prompt]},
+                    ]
+                    response = await asyncio.to_thread(self.model.generate_content, content)
+                    if not response or not getattr(response, "text", None):
+                        raise GeminiAPIError("Empty response from Gemini API")
+                    narrative = response.text.strip()
+                    break
+                except GeminiAPIError as err:
+                    if self._provider == "openai" and self._maybe_switch_from_openai(str(err)):
+                        continue
+                    if self._maybe_switch_gemini_model(str(err)):
+                        continue
+                    raise
+                except Exception as err:
+                    if self._provider == "openai" and self._maybe_switch_from_openai(str(err)):
+                        continue
+                    if self._maybe_switch_gemini_model(str(err)):
+                        continue
+                    raise GeminiAPIError(f"Gemini API error: {err}") from err
+
+            try:  # google SDK: usage metadata may exist
+                if self._provider == "gemini" and response is not None:
                     usage = getattr(response, "usage_metadata", None)
                     if usage:
                         in_tok = getattr(usage, "input_token_count", None)
                         out_tok = getattr(usage, "output_token_count", None)
-                        add_llm_tokens(settings.gemini_model, prompt=in_tok, completion=out_tok)
+                        add_llm_tokens(self._active_model_name, prompt=in_tok, completion=out_tok)
                         if game_mode:
                             add_llm_tokens_by_mode(
-                                settings.gemini_model, game_mode, in_tok, out_tok
+                                self._active_model_name, game_mode, in_tok, out_tok
                             )
                         try:
                             cost = 0.0
@@ -273,20 +451,20 @@ class GeminiLLMAdapter(LLMPort):
                                 cost += (
                                     out_tok / 1000.0
                                 ) * settings.finops_completion_token_price_usd
-                            add_llm_cost_usd(settings.gemini_model, cost)
+                            add_llm_cost_usd(self._active_model_name, cost)
                             if game_mode:
-                                add_llm_cost_usd_by_mode(settings.gemini_model, game_mode, cost)
+                                add_llm_cost_usd_by_mode(self._active_model_name, game_mode, cost)
                         except Exception:
                             pass
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
             try:
                 elapsed = time.perf_counter() - t0
                 model_label = (
                     settings.openai_model or "openai"
                     if self._provider == "openai"
-                    else settings.gemini_model
+                    else self._active_model_name
                 )
                 observe_llm_latency(model_label, elapsed)
                 if game_mode:
@@ -328,11 +506,14 @@ class GeminiLLMAdapter(LLMPort):
         Returns:
             Formatted user message string (pure data, no instructions)
         """
+        llm_context = match_data.get("llm_context")
+        if isinstance(llm_context, str) and llm_context.strip():
+            return llm_context.strip()
+
         match_id = match_data.get("match_id", "unknown")
         game_length = float(match_data.get("game_duration_minutes") or 0.0)
 
         target = match_data.get("target_player") or {}
-        target_pid = match_data.get("target_participant_id")
         target_name = (
             target.get("summoner_name") or match_data.get("target_summoner_name") or "Unknown"
         )
@@ -373,21 +554,21 @@ class GeminiLLMAdapter(LLMPort):
 **Match**: {match_id} | **Duration**: {game_length:.1f} min | **Player**: {target_name} ({target_champion})
 
 **Performance Scores (0-100)**
-- Overall: {target_scores['overall']:.1f}
-- ⚔️ Combat: {target_scores['combat']:.1f}
-- 💰 Economy: {target_scores['economy']:.1f}
-- 🎯 Objectives: {target_scores['objective']:.1f}
-- 👁️ Vision: {target_scores['vision']:.1f}
-- 🤝 Teamwork: {target_scores['teamwork']:.1f}
+- Overall: {target_scores["overall"]:.1f}
+- ⚔️ Combat: {target_scores["combat"]:.1f}
+- 💰 Economy: {target_scores["economy"]:.1f}
+- 🎯 Objectives: {target_scores["objective"]:.1f}
+- 👁️ Vision: {target_scores["vision"]:.1f}
+- 🤝 Teamwork: {target_scores["teamwork"]:.1f}
 
 **Key Metrics**
-- KDA: {raw_metrics['kda']:.1f}
-- Kill Participation: {raw_metrics['kill_participation']:.1f}%
-- CS/min: {raw_metrics['cs_per_min']:.1f}
-- Gold Diff: {raw_metrics['gold_difference']:.0f}
+- KDA: {raw_metrics["kda"]:.1f}
+- Kill Participation: {raw_metrics["kill_participation"]:.1f}%
+- CS/min: {raw_metrics["cs_per_min"]:.1f}
+- Gold Diff: {raw_metrics["gold_difference"]:.0f}
 
-**Strength Tags**: {', '.join(strengths) if strengths else 'None'}
-**Improvement Tags**: {', '.join(improvements) if improvements else 'None'}
+**Strength Tags**: {", ".join(strengths) if strengths else "None"}
+**Improvement Tags**: {", ".join(improvements) if improvements else "None"}
 
 **Full Data Context**:
 ```json
@@ -395,6 +576,47 @@ class GeminiLLMAdapter(LLMPort):
 ```
 """
         return prompt
+
+    def _format_player_scores(self, players: list[dict[str, Any]]) -> str:
+        """Render player score summary for debugging/testing scenarios."""
+
+        if not players:
+            return "No player scores available."
+
+        lines: list[str] = []
+        for player in players:
+            name = (player.get("summoner_name") or "Unknown").strip() or "Unknown"
+            champion = (player.get("champion_name") or "Unknown").strip() or "Unknown"
+            total = player.get("total_score", 0.0)
+            try:
+                total_val = float(total)
+            except Exception:
+                total_val = 0.0
+            lines.append(f"**{name} ({champion})** — Total {total_val:.1f}/100")
+
+        return "\n".join(lines)
+
+    async def extract_emotion(self, narrative: str) -> str:
+        """Derive coarse emotion tag from narrative text."""
+
+        if not narrative:
+            return "neutral"
+
+        text = narrative.lower()
+        keyword_map = (
+            ("legendary", "excited"),
+            ("dominating", "excited"),
+            ("dominate", "excited"),
+            ("struggled", "sympathetic"),
+            ("difficult", "sympathetic"),
+            ("balanced", "analytical"),
+            ("equal contribution", "analytical"),
+        )
+        for keyword, emotion in keyword_map:
+            if keyword in text:
+                return emotion
+
+        return "neutral"
 
     async def analyze_match_json(
         self,
@@ -415,49 +637,38 @@ class GeminiLLMAdapter(LLMPort):
             if system_prompt is None:
                 system_prompt = DEFAULT_SYSTEM_PROMPT
 
-            if self._provider == "openai":
-                import aiohttp
+            prompt = self._format_prompt(system_prompt, match_data)
 
-                url = f"{settings.openai_api_base.rstrip('/')}/v1/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {settings.openai_api_key}",
-                    "Content-Type": "application/json",
-                }
-                prompt = self._format_prompt(system_prompt, match_data)
-                payload = {
-                    "model": settings.openai_model or "gpt-4o-mini",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": float(getattr(settings, "openai_temperature", 0.7)),
-                    "max_tokens": int(getattr(settings, "openai_max_tokens", 1024)),
-                    "response_format": {"type": "json_object"},
-                }
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, headers=headers, json=payload) as resp:
-                        if resp.status != 200:
-                            text = await resp.text()
-                            raise GeminiAPIError(
-                                f"OpenAI-compatible API error {resp.status}: {text}"
-                            )
-                        data = await resp.json()
-                        content = ((data.get("choices") or [{}])[0].get("message") or {}).get(
-                            "content"
+            while True:
+                try:
+                    if self._provider == "openai":
+                        return await self._call_openai_json_completion(
+                            prompt=prompt, system_prompt=system_prompt
                         )
-                        if not content:
-                            raise GeminiAPIError(
-                                "OpenAI-compatible API returned empty JSON content"
-                            )
-                        return _json.loads(content)
-            else:
-                # Gemini JSON model path
-                prompt = self._format_prompt(system_prompt, match_data)
-                response = await asyncio.to_thread(self.model_json.generate_content, prompt)
-                text = getattr(response, "text", None) or getattr(response, "candidates", [None])[0]
-                if not response or not response.text:
-                    raise GeminiAPIError("Empty JSON response from Gemini API")
-                return _json.loads(response.text)
+
+                    content = [
+                        {
+                            "role": "system",
+                            "parts": [system_prompt or DEFAULT_SYSTEM_PROMPT],
+                        },
+                        {"role": "user", "parts": [prompt]},
+                    ]
+                    response = await asyncio.to_thread(self.model_json.generate_content, content)
+                    if not response or not getattr(response, "text", None):
+                        raise GeminiAPIError("Empty JSON response from Gemini API")
+                    return _json.loads(response.text)
+                except GeminiAPIError as err:
+                    if self._provider == "openai" and self._maybe_switch_from_openai(str(err)):
+                        continue
+                    if self._maybe_switch_gemini_model(str(err)):
+                        continue
+                    raise
+                except Exception as err:
+                    if self._provider == "openai" and self._maybe_switch_from_openai(str(err)):
+                        continue
+                    if self._maybe_switch_gemini_model(str(err)):
+                        continue
+                    raise GeminiAPIError(f"Gemini JSON API error: {err}") from err
         except Exception as e:
             logger.error(f"Gemini JSON API error for match {match_id}: {e}")
             raise GeminiAPIError(f"Gemini JSON API error: {e}") from e

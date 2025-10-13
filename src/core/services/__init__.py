@@ -4,9 +4,11 @@ Services connect ports (interfaces) with adapters (implementations),
 providing high-level business operations to the application layer.
 """
 
-from src.core.services.user_binding_service import UserBindingService
 from src.core.services.celery_task_service import CeleryTaskService
+from src.core.services.match_completion_watcher import MatchCompletionWatcher
 from src.core.services.match_history_service import MatchHistoryService
+from src.core.services.post_game_voice_orchestrator import PostGameVoiceOrchestrator
+from src.core.services.user_binding_service import UserBindingService
 from src.core.services.ab_testing import (
     CohortAssignmentService,
     PromptSelectorService,
@@ -22,4 +24,6 @@ __all__ = [
     "PromptSelectorService",
     "TeamSummaryStatistics",
     "PromptVariantMetadata",
+    "MatchCompletionWatcher",
+    "PostGameVoiceOrchestrator",
 ]

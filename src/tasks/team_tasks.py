@@ -28,6 +28,7 @@ from celery import Task
 from pydantic import ValidationError
 
 from src.adapters.database import DatabaseAdapter
+from src.adapters.gemini_llm import GeminiLLMAdapter
 from src.adapters.riot_api import RateLimitError, RiotAPIAdapter, RiotAPIError
 from src.config.settings import settings
 from src.contracts.timeline import MatchTimeline
@@ -37,7 +38,6 @@ from src.core.domain.team_policies import (
     should_run_team_full_token,
     tldr_contains_hallucination,
 )
-from src.core.fallbacks.llm_fallback import generate_fallback_narrative
 from src.core.observability import clear_correlation_id, llm_debug_wrapper, set_correlation_id
 
 # 测试健壮性：在缺少科学计算依赖（如numpy）时，延迟/宽容导入
@@ -222,6 +222,7 @@ class AnalyzeTeamTask(Task):
 
 
 from src.contracts.team_analysis import TeamAggregates, TeamAnalysisReport, TeamPlayerEntry
+import contextlib
 
 
 @celery_app.task(
@@ -295,7 +296,7 @@ def analyze_team_task(
 
     # Bind correlation ID for end-to-end tracing
     try:
-        _cid = correlation_id or f"{match_id}:{int(time.time()*1000)%100000}"
+        _cid = correlation_id or f"{match_id}:{int(time.time() * 1000) % 100000}"
         set_correlation_id(_cid)
     except Exception:
         pass
@@ -322,7 +323,6 @@ def analyze_team_task(
 
         # ===== V2.3 Game Mode Detection & Strategy Selection =====
         # Detect game mode for by-mode monitoring and strategy routing
-        game_mode = None
         try:
             from src.contracts.v23_multi_mode_analysis import detect_game_mode
             from src.core.services.analysis_strategy_factory import (
@@ -480,10 +480,8 @@ def analyze_team_task(
                 workflow_metrics=metrics,
             )
             # Attach Celery task id for observability (footer trace)
-            try:
+            with contextlib.suppress(Exception):
                 team_report.trace_task_id = str(getattr(self.request, "id", "") or "")
-            except Exception:
-                pass
 
             # Optional: enrich with full-token TL;DR (no extra message spam)
             # Skip for Arena - Arena有专门的双人分析，不走Team TLDR
@@ -539,16 +537,37 @@ def analyze_team_task(
                             metadata = {
                                 "emotion": "平淡",
                                 "source": "team_tldr",
+                                "team_summary_text": summary,
                             }
-                            # Store TTS-optimized summary if generated
                             if tts_summary:
-                                metadata["tts_summary"] = tts_summary
+                                metadata["team_tts_summary"] = tts_summary
+                                metadata["team_tts_source"] = "llm"
+
+                            existing_record = loop.run_until_complete(
+                                self.db.get_analysis_result(match_id)
+                            )
+                            existing_meta: dict[str, Any] = {}
+                            existing_narrative = summary
+                            if existing_record:
+                                existing_meta_raw = existing_record.get("llm_metadata")
+                                if isinstance(existing_meta_raw, str):
+                                    try:
+                                        existing_meta = json.loads(existing_meta_raw)
+                                    except Exception:
+                                        existing_meta = {}
+                                elif isinstance(existing_meta_raw, dict):
+                                    existing_meta = existing_meta_raw
+                                existing_narrative = (
+                                    existing_record.get("llm_narrative") or existing_narrative
+                                )
+
+                            merged_meta = {**existing_meta, **metadata}
 
                             loop.run_until_complete(
                                 self.db.update_llm_narrative(
                                     match_id=match_id,
-                                    llm_narrative=summary,
-                                    llm_metadata=metadata,
+                                    llm_narrative=existing_narrative,
+                                    llm_metadata=merged_meta,
                                 )
                             )
                         except Exception:
@@ -610,7 +629,7 @@ def analyze_team_task(
                         "fallback_summary_generated",
                         extra={
                             "duration_min": duration_min,
-                            "reason": ("flag_off" if not team_ft_enabled else "empty_summary"),
+                            "reason": "empty_summary",
                         },
                     )
                 except Exception:
@@ -752,34 +771,26 @@ def analyze_team_task(
         return metrics
     finally:
         # Clear correlation ID from context
-        try:
+        with contextlib.suppress(Exception):
             clear_correlation_id()
-        except Exception:
-            pass
 
         # Preserve earlier computed duration if present; otherwise compute now
         if "duration_ms" not in metrics:
             metrics["duration_ms"] = (time.perf_counter() - started) * 1000
         # Ensure network sessions are closed and loop cleaned up to avoid cross-loop reuse
-        try:
+        with contextlib.suppress(Exception):
             loop.run_until_complete(self.riot.close())
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             loop.run_until_complete(self.db.disconnect())
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             loop.close()
-        except Exception:
-            pass
 
     # Full-token Team analysis switch (analyzes full 10-player + timeline context)
     import os as _os
 
     if should_run_team_full_token(metrics.get("game_mode"), _os.getenv("TEAM_FULL_TOKEN_MODE", "")):
         try:
-            full_result = _run_full_token_team_analysis(
+            _run_full_token_team_analysis(
                 match_details=match_details,
                 timeline_data=timeline,
                 requester_puuid=requester_puuid,
@@ -816,121 +827,6 @@ def analyze_team_task(
             "team_full_token_switch_skipped",
             extra={"reason": "arena_mode", "game_mode": metrics.get("game_mode")},
         )
-
-        # Optional: post paginated pages to channel for full 10 players (non-interactive)
-        try:
-            import os as _os2
-
-            if channel_id and _os2.getenv("TEAM_PAGINATED_POST_CHANNEL", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                from src.core.views.team_pager import build_player_pages
-
-                # Recompute V1 scores for all players for page content (include match_details for accurate vision)
-                ao = generate_llm_input(MatchTimeline(**timeline), match_details=match_details)
-                pages = build_player_pages(match_details, ao)
-                # Send pages as separate channel messages (rate-limited by Discord; here we send few)
-                adapter = DiscordWebhookAdapter()
-                for pg in pages[:10]:  # cap at 10 pages
-                    embed_dict = {
-                        "title": pg["title"],
-                        "description": pg["content"],
-                        "color": 0x5865F2,
-                    }
-                    _ = loop.run_until_complete(
-                        adapter.publish_channel_message(channel_id, embed_dict)
-                    )
-                loop.run_until_complete(adapter.close())
-        except Exception as e:
-            logger.warning(f"team_paginated_post_failed: {e}")
-
-        # Optional: post overview receipt before pages
-        try:
-            import os as _os3
-
-            if channel_id and _os3.getenv("TEAM_PAGINATED_POST_CHANNEL", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                from types import SimpleNamespace
-
-                from src.core.views.team_ascii_receipt import build_team_receipt
-
-                # Build a minimal report-like object for overview using friendly team (5 players)
-                parts = match_details.get("info", {}).get("participants", [])
-                target_part = next((p for p in parts if p.get("puuid") == requester_puuid), None)
-                t_team = (
-                    100
-                    if (target_part and int(target_part.get("participantId", 0) or 0) <= 5)
-                    else 200
-                )
-                team_parts = [
-                    p
-                    for p in parts
-                    if (100 if int(p.get("participantId", 0) or 0) <= 5 else 200) == t_team
-                ][:5]
-                # We need per-player scores to populate dimensions; recompute with details for vision/wards
-                ao2 = generate_llm_input(MatchTimeline(**timeline), match_details=match_details)
-                idx = {int(ps.participant_id): ps for ps in ao2.player_scores}
-                team_players_objs = []
-                for p in team_parts:
-                    pid = int(p.get("participantId", 0) or 0)
-                    ps = idx.get(pid)
-                    if not ps:
-                        continue
-                    team_players_objs.append(
-                        SimpleNamespace(
-                            summoner_name=p.get("riotIdGameName")
-                            or p.get("summonerName")
-                            or p.get("gameName"),
-                            combat_score=ps.combat_efficiency,
-                            economy_score=ps.economic_management,
-                            vision_score=ps.vision_control,
-                            objective_score=ps.objective_control,
-                            teamplay_score=ps.team_contribution,
-                            survivability_score=getattr(ps, "survivability_score", 0.0),
-                        )
-                    )
-                # Detect game mode for correct receipt labeling
-                detected_mode = "summoners_rift"  # default
-                try:
-                    from src.contracts.v23_multi_mode_analysis import detect_game_mode
-
-                    qid = int(match_details.get("info", {}).get("queueId", 0))
-                    gm = detect_game_mode(qid)
-                    detected_mode = _map_game_mode_to_contract(gm.mode)
-                except Exception:
-                    pass
-
-                report_like = SimpleNamespace(
-                    team_analysis=team_players_objs,
-                    target_player_name=(
-                        target_part.get("riotIdGameName")
-                        or target_part.get("summonerName")
-                        or target_part.get("gameName")
-                        or "-"
-                    ),
-                    game_mode=detected_mode,
-                )
-                receipt = build_team_receipt(report_like)
-                embed_dict = {
-                    "title": "Team Overview",
-                    "description": f"```\n{receipt}\n```",
-                    "color": 0x5865F2,
-                }
-                adapter2 = DiscordWebhookAdapter()
-                _ = loop.run_until_complete(
-                    adapter2.publish_channel_message(channel_id, embed_dict)
-                )
-                loop.run_until_complete(adapter2.close())
-        except Exception as e:
-            logger.warning(f"team_overview_receipt_failed: {e}")
-            # fall through to standard strategy path
 
 
 def _generate_user_profile_context(profile: Any) -> str:
@@ -1273,7 +1169,7 @@ def _run_full_token_team_analysis(
 
     # Build V1-allplayers scores from timeline
     analysis_output = generate_llm_input(MatchTimeline(**timeline_data))
-    analysis_output_payload = analysis_output.model_dump(mode="json")
+    analysis_output.model_dump(mode="json")
 
     # Build per-player compact dict (10 players)
     players: list[dict[str, Any]] = []
@@ -1402,10 +1298,8 @@ def _run_full_token_team_analysis(
         pass
     # Fallback 2: use gameDuration from match details info
     if duration_s <= 0:
-        try:
+        with contextlib.suppress(Exception):
             duration_s = float(info.get("gameDuration", 0) or 0)
-        except Exception:
-            pass
     # Fallback 3: derive from timeline frame timestamps (works for Arena + SR)
     if duration_s <= 0:
         try:
@@ -1449,25 +1343,74 @@ def _run_full_token_team_analysis(
         "phase_minutes": phase_bounds,
     }
 
-    # 延迟导入以避免测试环境缺少google.generativeai导致导入失败
-    from src.adapters.gemini_llm import GeminiLLMAdapter  # local import
+    # 延迟导入以避免测试环境缺少 google.generativeai 导致导入失败
 
-    llm = GeminiLLMAdapter()
-    narrative = asyncio.run(llm.analyze_match(full_payload, TEAM_FULL_TOKEN_SYSTEM_PROMPT)) or ""
-    narrative = narrative.strip()
-    narrative_fallback_used = False
-    if not narrative or tldr_contains_hallucination(narrative):
+    def _build_degraded_narrative(reason: str, tldr_text: str) -> str:
+        """构造降级模式下的结构化叙事，保证用户看到可执行的信息。"""
+
+        reason_clean = (reason.strip() or "LLM unavailable")[:160]
+        match_id = str(full_payload.get("match_id") or "unknown")
+        target_name = (
+            (
+                target_part.get("riotIdGameName")
+                or target_part.get("summonerName")
+                or target_part.get("gameName")
+                or "-"
+            )
+            if target_part
+            else "-"
+        )
+
+        lines = [
+            "[降级模式] LLM 链路不可用，已自动生成结构化摘要。",
+            f"• 原因: {reason_clean}",
+            f"• 比赛ID: {match_id}",
+        ]
+        if duration_min:
+            lines.append(f"• 比赛时长: {duration_min:.1f} 分钟")
+        lines.append(f"• 目标召唤师: {target_name}")
+        lines.append(f"• TL;DR: {tldr_text}")
+        return "\n".join(lines)
+
+    try:
+        llm = GeminiLLMAdapter()
+        narrative = (
+            asyncio.run(llm.analyze_match(full_payload, TEAM_FULL_TOKEN_SYSTEM_PROMPT)) or ""
+        )
+        narrative = narrative.strip()
+        if not narrative or tldr_contains_hallucination(narrative):
+            logger.error(
+                "team_narrative_invalid",
+                extra={
+                    "match_id": full_payload.get("match_id"),
+                    "snippet": narrative[:160],
+                },
+            )
+            raise RuntimeError("LLM returned invalid team narrative")
+        if len(narrative) > 1800:
+            narrative = narrative[:1800]
+    except Exception as exc:  # noqa: BLE001 - 我们需要将任意异常转换为降级摘要
+        fallback_reason = str(exc).strip() or exc.__class__.__name__
+        fallback_tldr = _build_structured_team_tldr_fallback(target_pid)
         logger.warning(
-            "team_narrative_hallucination_detected",
+            "team_llm_unavailable",
             extra={
                 "match_id": full_payload.get("match_id"),
-                "snippet": narrative[:160],
+                "error": fallback_reason,
+                "duration_min": duration_min,
             },
         )
-        narrative = generate_fallback_narrative(analysis_output_payload)
-        narrative_fallback_used = True
-    if len(narrative) > 1800:
-        narrative = narrative[:1800]
+        degraded_narrative = _build_degraded_narrative(fallback_reason, fallback_tldr)
+        return {
+            "ai_narrative_text": degraded_narrative,
+            "tldr": fallback_tldr,
+            "llm_sentiment_tag": "平淡",
+            "team_summary": {
+                "fallback_reasons": ["llm_unavailable"],
+                "llm_error": fallback_reason[:120],
+            },
+            "algorithm_version": "v2_full_token",
+        }
 
     team_summary_metadata: dict[str, Any] = {}
 
@@ -1567,9 +1510,6 @@ def _run_full_token_team_analysis(
     except Exception:
         pass
 
-    if narrative_fallback_used:
-        team_summary_metadata.setdefault("fallback_reasons", []).append("narrative_fallback")
-
     if "fallback_reasons" in team_summary_metadata:
         reasons = team_summary_metadata["fallback_reasons"]
         if isinstance(reasons, list):
@@ -1658,10 +1598,8 @@ async def _generate_team_tts_summary(
                 truncated.rfind("？"),
                 truncated.rfind("\n"),
             )
-            if last_boundary > 100:  # Only use boundary if it's not too early
-                fallback = truncated[: last_boundary + 1]
-            else:
-                fallback = truncated + "..."
+            # Only use boundary if it's not too early
+            fallback = truncated[: last_boundary + 1] if last_boundary > 100 else truncated + "..."
 
         return fallback
 
@@ -1912,6 +1850,7 @@ def _build_final_analysis_report(
         vision_score = mp.get("visionScore", 0) or 0
         detector_wards = mp.get("detectorWardsPlaced", mp.get("visionWardsBoughtInGame", 0) or 0)
         cc_time = mp.get("timeCCingOthers", mp.get("totalTimeCCDealt", 0)) or 0
+        cc_per_min_val = (float(cc_time) / minutes) if minutes > 0 else 0.0
         cc_score_val: float
         try:
             challenges = mp.get("challenges")
@@ -1953,6 +1892,7 @@ def _build_final_analysis_report(
             "vision_score": vision_score,
             "detector_wards_placed": detector_wards,
             "cc_time": float(cc_time),
+            "cc_per_min": cc_per_min_val,
             "cc_score": cc_score_val,
             "level": level,
             "xp": 0,
@@ -2179,7 +2119,7 @@ def _build_final_analysis_report(
                 try:
                     from src.contracts.v23_multi_mode_analysis import detect_game_mode
 
-                    qid = int(match_details.get("info", {}).get("queueId", 0))
+                    qid = int(match_data.get("info", {}).get("queueId", 0))
                     gm = detect_game_mode(qid)
                     detected_mode = _map_game_mode_to_contract(gm.mode)
                 except Exception:
@@ -2196,10 +2136,8 @@ def _build_final_analysis_report(
                     game_mode=detected_mode,
                 )
                 receipt = build_team_receipt(report_like)
-                try:
+                with contextlib.suppress(Exception):
                     v1_scores.raw_stats = {**(v1_scores.raw_stats or {}), "team_receipt": receipt}
-                except Exception:
-                    pass
         except Exception:
             # Non-fatal: header enhancement is optional
             pass
@@ -2358,7 +2296,7 @@ def _build_final_analysis_report(
         champion_name=champion_name,
         champion_id=champion_id,
         ai_narrative_text=ai_narrative[:1900],
-        llm_sentiment_tag=sentiment,  # type: ignore[arg-type]
+        llm_sentiment_tag=sentiment,
         v1_score_summary=v1_scores,
         champion_assets_url=champion_assets_url,
         processing_duration_ms=processing_duration_ms,
@@ -2416,6 +2354,32 @@ def _build_team_overview_report(
             "SUPPORT": "UTILITY",
         }
         return mapping.get(role, "UTILITY")
+
+    def _find_lane_opponent(me: dict[str, Any]) -> dict[str, Any] | None:
+        my_team_id = int(me.get("teamId", 0) or 0)
+        lane = str(me.get("individualPosition") or "").upper()
+        team_lane = str(me.get("teamPosition") or "").upper()
+
+        def _norm(pos: Any) -> str:
+            return str(pos or "").upper()
+
+        enemies = [p for p in participants if int(p.get("teamId", 0) or 0) != my_team_id]
+
+        if lane:
+            for enemy in enemies:
+                if _norm(enemy.get("individualPosition")) == lane:
+                    return enemy
+
+        if team_lane:
+            for enemy in enemies:
+                if _norm(enemy.get("teamPosition")) == team_lane:
+                    return enemy
+
+        for enemy in enemies:
+            if _norm(enemy.get("individualPosition")) in {"MIDDLE", "MID"}:
+                return enemy
+
+        return None
 
     # Build 5 friendly players
     _player_payloads: list[dict[str, Any]] = []
@@ -2613,11 +2577,11 @@ def _build_team_overview_report(
                 lines.append("高光回合:")
                 for r in top3:
                     lines.append(
-                        f"• R{r.get('round_number')}: {r.get('kills',0)}杀/{r.get('deaths',0)}死, 伤害{r.get('damage_dealt',0)} 承伤{r.get('damage_taken',0)}"
+                        f"• R{r.get('round_number')}: {r.get('kills', 0)}杀/{r.get('deaths', 0)}死, 伤害{r.get('damage_dealt', 0)} 承伤{r.get('damage_taken', 0)}"
                     )
             if worst:
                 lines.append(
-                    f"艰难回合: R{worst.get('round_number')}: 阵亡{worst.get('deaths',0)}次, 承伤{worst.get('damage_taken',0)}"
+                    f"艰难回合: R{worst.get('round_number')}: 阵亡{worst.get('deaths', 0)}次, 承伤{worst.get('damage_taken', 0)}"
                 )
             if longest_win or longest_lose:
                 lines.append(
@@ -2663,6 +2627,27 @@ def _build_team_overview_report(
     strengths: list[TeamAnalysisReport.DimensionHighlight] = []
     weaknesses: list[TeamAnalysisReport.DimensionHighlight] = []
     if target_entry:
+        opponent_scores: dict[str, float] | None = None
+        if gm_label == "summoners_rift" and target_p:
+            opponent = _find_lane_opponent(target_p)
+            if opponent:
+                try:
+                    opp_pid = int(opponent.get("participantId", 0) or 0)
+                except Exception:
+                    opp_pid = 0
+                opp_ps = idx.get(opp_pid)
+                if opp_ps:
+                    opponent_scores = {
+                        "combat_efficiency": float(opp_ps.combat_efficiency),
+                        "economic_management": float(opp_ps.economic_management),
+                        "objective_control": float(opp_ps.objective_control),
+                        "vision_control": float(opp_ps.vision_control),
+                        "team_contribution": float(opp_ps.team_contribution),
+                    }
+                    opp_surv = getattr(opp_ps, "survivability_score", None)
+                    if opp_surv is not None:
+                        opponent_scores["survivability"] = float(opp_surv)
+
         dimension_payload = [
             (
                 "combat_efficiency",
@@ -2713,6 +2698,11 @@ def _build_team_overview_report(
                 label=label,
                 score=round(float(score), 1),
                 delta_vs_team=round(float(score) - float(avg), 1),
+                delta_vs_opponent=(
+                    round(float(score) - opponent_scores[dim_key], 1)
+                    if opponent_scores and dim_key in opponent_scores
+                    else None
+                ),
             )
             for dim_key, label, score, avg in dimension_payload
         ]
@@ -2743,20 +2733,20 @@ def _build_team_overview_report(
         import os as _os_enrich
 
         match_id = match_details.get("metadata", {}).get("matchId", "unknown")
-        if str(_os_enrich.getenv("CHIMERA_TEAM_BUILD_ENRICH", "0")).lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
+        env_flag = str(_os_enrich.getenv("CHIMERA_TEAM_BUILD_ENRICH", "")).strip().lower()
+        feature_enabled = (
+            env_flag in ("1", "true", "yes", "on")
+            if env_flag
+            else settings.feature_team_build_enrichment_enabled
+        )
+
+        if feature_enabled:
             logger.info(
                 "team_builds_enricher_enabled",
                 extra={
                     "match_id": match_id,
                     "target_puuid": target_puuid or "",
                     "locale": _os_enrich.getenv("CHIMERA_LOCALE", "zh_CN"),
-                    "opgg_enabled": str(_os_enrich.getenv("CHIMERA_OPGG_ENABLED", "0")).lower()
-                    in ("1", "true", "yes", "on"),
                 },
             )
             try:
@@ -2767,13 +2757,16 @@ def _build_team_overview_report(
                 )
 
                 dd = DataDragonClient(locale=_os_enrich.getenv("CHIMERA_LOCALE", "zh_CN"))
+
+                opgg_flag = str(_os_enrich.getenv("CHIMERA_OPGG_ENABLED", "")).strip().lower()
+                opgg_enabled = (
+                    opgg_flag in ("1", "true", "yes", "on")
+                    if opgg_flag
+                    else settings.feature_opgg_enrichment_enabled
+                )
+
                 opgg = None
-                if str(_os_enrich.getenv("CHIMERA_OPGG_ENABLED", "0")).lower() in (
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                ):
+                if opgg_enabled:
                     try:
                         opgg = OPGGAdapter()
                         if not opgg.available:
@@ -2787,6 +2780,7 @@ def _build_team_overview_report(
                             extra={"match_id": match_id, "error": str(exc)},
                         )
                         opgg = None
+
                 enricher = TeamBuildsEnricher(dd, opgg)
                 enrich_text, enrich_payload = enricher.build_summary_for_target(
                     match_details,
@@ -2838,7 +2832,7 @@ def _build_team_overview_report(
                 "team_builds_enricher_disabled",
                 extra={
                     "match_id": match_id,
-                    "env_flag": _os_enrich.getenv("CHIMERA_TEAM_BUILD_ENRICH", "0"),
+                    "env_flag": _os_enrich.getenv("CHIMERA_TEAM_BUILD_ENRICH", ""),
                 },
             )
     except Exception as exc:

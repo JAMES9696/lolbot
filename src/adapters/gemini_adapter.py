@@ -145,14 +145,14 @@ Return ONLY a valid JSON object with this structure:
                 # Return as JSON string for storage
                 return analysis.model_dump_json()
 
-            except asyncio.TimeoutError:
+            except TimeoutError as e:
                 logger.warning(
                     "llm_timeout",
                     attempt=attempt,
                     max_retries=max_retries,
                 )
                 if attempt == max_retries:
-                    raise RuntimeError(f"Gemini API timeout after {max_retries} attempts")
+                    raise RuntimeError(f"Gemini API timeout after {max_retries} attempts") from e
                 await asyncio.sleep(2**attempt)  # Exponential backoff
 
             except Exception as e:
@@ -208,28 +208,28 @@ Return ONLY a valid JSON object with this structure:
         # Build formatted context
         context = f"""
 ### Match Summary
-- Match ID: {match_data.get('match_id', 'Unknown')}
-- Duration: {match_data.get('game_duration_minutes', 0):.1f} minutes
-- Team Performance: Blue {match_data.get('team_blue_avg_score', 0):.1f}/100 vs Red {match_data.get('team_red_avg_score', 0):.1f}/100
+- Match ID: {match_data.get("match_id", "Unknown")}
+- Duration: {match_data.get("game_duration_minutes", 0):.1f} minutes
+- Team Performance: Blue {match_data.get("team_blue_avg_score", 0):.1f}/100 vs Red {match_data.get("team_red_avg_score", 0):.1f}/100
 
 ### Focus Player Analysis
-- Participant ID: {focus_player.get('participant_id')}
-- Overall Score: {focus_player.get('total_score', 0):.1f}/100
+- Participant ID: {focus_player.get("participant_id")}
+- Overall Score: {focus_player.get("total_score", 0):.1f}/100
 
 #### Five-Dimensional Breakdown
-1. Combat Efficiency: {focus_player.get('combat_efficiency', 0):.1f}/100
-   - KDA: {focus_player.get('kda', 0):.2f}
-   - Kill Participation: {focus_player.get('kill_participation', 0):.1f}%
+1. Combat Efficiency: {focus_player.get("combat_efficiency", 0):.1f}/100
+   - KDA: {focus_player.get("kda", 0):.2f}
+   - Kill Participation: {focus_player.get("kill_participation", 0):.1f}%
 
-2. Economic Management: {focus_player.get('economic_management', 0):.1f}/100
-   - CS/min: {focus_player.get('cs_per_min', 0):.1f}
-   - Gold Difference: {focus_player.get('gold_difference', 0):+d}
+2. Economic Management: {focus_player.get("economic_management", 0):.1f}/100
+   - CS/min: {focus_player.get("cs_per_min", 0):.1f}
+   - Gold Difference: {focus_player.get("gold_difference", 0):+d}
 
-3. Objective Control: {focus_player.get('objective_control', 0):.1f}/100
+3. Objective Control: {focus_player.get("objective_control", 0):.1f}/100
 
-4. Vision Control: {focus_player.get('vision_control', 0):.1f}/100
+4. Vision Control: {focus_player.get("vision_control", 0):.1f}/100
 
-5. Team Contribution: {focus_player.get('team_contribution', 0):.1f}/100
+5. Team Contribution: {focus_player.get("team_contribution", 0):.1f}/100
 
 #### Identified Strengths
 """

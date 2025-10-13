@@ -6,10 +6,8 @@ from collections.abc import Iterable
 import discord
 
 from src.contracts.team_analysis import TeamAnalysisReport
-from src.contracts.v2_team_analysis import V2TeamAnalysisReport
 from src.core.utils.clamp import clamp_code_block, clamp_field, clamp_text
 from src.core.views.emoji_registry import resolve_emoji
-from src.core.views.paginated_team_view import PaginatedTeamAnalysisView
 
 _ASCII_TRUE = {"1", "true", "yes", "on"}
 
@@ -189,10 +187,14 @@ def _format_highlights(
     lines: list[str] = []
     for item in highlights:
         emoji, label = _dimension_display(item.dimension, item.label, ascii_safe)
-        delta = ""
+        delta_parts: list[str] = []
         if item.delta_vs_team is not None:
             sign = "+" if item.delta_vs_team >= 0 else ""
-            delta = f" ({sign}{item.delta_vs_team:.1f} vs 队均)"
+            delta_parts.append(f"{sign}{item.delta_vs_team:.1f} vs 队均")
+        if item.delta_vs_opponent is not None:
+            sign = "+" if item.delta_vs_opponent >= 0 else ""
+            delta_parts.append(f"{sign}{item.delta_vs_opponent:.1f} vs 对位")
+        delta = f" ({' / '.join(delta_parts)})" if delta_parts else ""
         bar = _progress_bar(item.score)
         lines.append(f"{emoji} {label}: {bar} {item.score:.1f}分{delta}".strip())
     return "\n".join(lines) if lines else empty_text
@@ -429,20 +431,3 @@ def render_team_overview_embed(report: TeamAnalysisReport) -> discord.Embed:
 
     embed.set_footer(text=_format_footer(report))
     return embed
-
-
-def render_v2_team_analysis_paginated(
-    report: V2TeamAnalysisReport,
-) -> tuple[discord.Embed, PaginatedTeamAnalysisView]:
-    # Render V2 team analysis using a paginated Discord view with interactive components.
-    # Create paginated view
-    view = PaginatedTeamAnalysisView(
-        report=report,
-        match_id=report.match_id,
-        timeout=900.0,  # 15 minutes
-    )
-
-    # Get initial page embed (summary page)
-    initial_embed = view._create_summary_page()
-
-    return initial_embed, view

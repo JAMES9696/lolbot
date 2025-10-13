@@ -9,7 +9,7 @@ from src.config.settings import Settings
 
 async def check_task_status():
     """Check current task status in Redis and database."""
-    settings = Settings()
+    Settings()
     db = DatabaseAdapter()
     redis = RedisAdapter()
 

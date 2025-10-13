@@ -16,6 +16,15 @@
   - 滚动发布或蓝绿切换
 - 快速回滚
   - 回滚镜像/版本 + `alembic downgrade`（如 schema 兼容，则跳过）
+- Arena 数据版本锁定
+  - 同步最新版本号：更新 `src/config/settings.py` 中的 `ARENA_DATA_VERSION`（或 `.env` 覆盖变量）
+  - 重新拉取静态资源：跑 `scripts/sync_arena_data.py <patch>`（写入 `src/assets/arena/augments.zh_cn.json`）
+  - 执行回归：`poetry run pytest tests/unit/test_arena_augments.py`
+  - 部署后重启 Celery Worker：`poetry run scripts/restart_worker.sh`
+- 出装图静态资源
+  - 默认从 `BUILD_VISUAL_BASE_URL` 提供；若留空则自动回退 `CDN_BASE_URL/static/builds`
+  - 部署前确认 CDN/静态服务器可写入目录 `BUILD_VISUAL_STORAGE_PATH`
+  - 验证：完成一次 `/analyze`，在 Discord Embed 的 “🖼️ 数据图表” 中应出现 CDN 链接；访问 `/static/builds/...` 返回 200
 
 ## SLO 告警响应（示例流程）
 - P95 延迟 > 10 秒（告警：ChimeraLatencyP95Breached）

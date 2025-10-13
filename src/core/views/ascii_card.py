@@ -253,23 +253,43 @@ def build_ascii_card(report: Any) -> str:
             f"🎯 CC     {_bar20(cc)}",
         ]
 
-    # Build box
+    # Build box with visual improvements
     inner = [
-        f" {title}",
-        f" {top_line}",
-        f" {mode_line}",
-        *[f" {r}" for r in rows[:4]],
-        *[f" {r}" for r in rows[4:6]],
+        f"{title}",
+        f"{'─' * 40}",  # Separator line
+        f"{top_line}",
+        f"{mode_line}",
+        "",  # Empty line for spacing
     ]
+
+    # Add dimension rows with better spacing
+    for _i, r in enumerate(rows[:4]):
+        inner.append(f"{r}")
+
+    if len(rows) > 4:
+        for r in rows[4:6]:
+            inner.append(f"{r}")
+
     # Add extended rows only for SR mode
     if not (is_arena or is_aram):
-        inner.extend([f" {r}" for r in rows_ext])
-    inner += [
-        f" Sentiment: [{sent}]",
-    ]
+        inner.append("")  # Separator
+        for r in rows_ext:
+            inner.append(f"{r}")
+
+    inner.append("")  # Empty line before sentiment
+    inner.append(f"AI情绪: [{sent}]")
+
+    # Build bordered box
     inner_width = max(_display_width(s) for s in inner)
-    width = max(56, inner_width + 2)
-    top_border = b_t + (b_h * (width - 2)) + b_t
-    mid = [b_v + _pad_to_width(s, width - 2) + b_v for s in inner]
-    bottom_border = top_border
+    width = max(48, inner_width + 4)
+
+    # Use box drawing characters to avoid markdown conflicts
+    top_border = "┌" + ("─" * (width - 2)) + "┐"
+    bottom_border = "└" + ("─" * (width - 2)) + "┘"
+
+    mid = []
+    for s in inner:
+        padded = _pad_to_width(f" {s}", width - 2)
+        mid.append("│" + padded + "│")
+
     return "\n".join([top_border, *mid, bottom_border])

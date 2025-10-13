@@ -238,7 +238,7 @@ def get_system_prompt(version: str = "v2_storytelling") -> str:
     """
     if version not in PROMPT_VERSIONS:
         raise KeyError(
-            f"Unknown prompt version: {version}. " f"Available: {list(PROMPT_VERSIONS.keys())}"
+            f"Unknown prompt version: {version}. Available: {list(PROMPT_VERSIONS.keys())}"
         )
 
     return PROMPT_VERSIONS[version]
