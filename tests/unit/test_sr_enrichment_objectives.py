@@ -17,7 +17,7 @@ def _timeline_with_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     frames = [
         {
             "timestamp": 600000,
-            "participantFrames": {
+            "participant_frames": {
                 "1": {"totalGold": 4500, "xp": 6000},
                 "7": {"totalGold": 4300, "xp": 5800},
             },
@@ -25,7 +25,7 @@ def _timeline_with_events(events: list[dict[str, Any]]) -> dict[str, Any]:
         },
         {
             "timestamp": 900000,
-            "participantFrames": {
+            "participant_frames": {
                 "1": {"totalGold": 7000, "xp": 9500},
                 "7": {"totalGold": 6800, "xp": 9200},
             },
@@ -183,7 +183,7 @@ def test_frame_fallback_within_window_uses_nearest_frame() -> None:
     frames = [
         {
             "timestamp": 588000,  # 12s before 10 min, within tolerance
-            "participantFrames": {
+            "participant_frames": {
                 "1": {
                     "totalGold": 4900,
                     "xp": 6500,
@@ -201,7 +201,7 @@ def test_frame_fallback_within_window_uses_nearest_frame() -> None:
         },
         {
             "timestamp": 905000,  # 5s after 15 min, within tolerance
-            "participantFrames": {
+            "participant_frames": {
                 "1": {
                     "totalGold": 7600,
                     "xp": 11200,
@@ -231,11 +231,12 @@ def test_frame_fallback_within_window_uses_nearest_frame() -> None:
     assert data.get("xp_diff_15") == 400
 
 
-def test_frame_outside_tolerance_returns_none() -> None:
+def test_frame_outside_tolerance_uses_fallback() -> None:
+    """When frames are outside the initial tolerance, expanded search finds the closest available frame."""
     frames = [
         {
-            "timestamp": 540000,  # 60s before target -> outside tolerance
-            "participantFrames": {
+            "timestamp": 540000,  # 60s before 10min target
+            "participant_frames": {
                 "1": {
                     "totalGold": 4200,
                     "xp": 5800,
@@ -252,8 +253,8 @@ def test_frame_outside_tolerance_returns_none() -> None:
             "events": [],
         },
         {
-            "timestamp": 840000,
-            "participantFrames": {
+            "timestamp": 840000,  # 60s before 15min target
+            "participant_frames": {
                 "1": {
                     "totalGold": 6200,
                     "xp": 8700,
@@ -275,8 +276,11 @@ def test_frame_outside_tolerance_returns_none() -> None:
 
     data = extract_sr_enrichment(timeline, details, participant_id=1)
 
-    assert data.get("cs_at_10") is None
-    assert data.get("gold_diff_10") is None
-    assert data.get("xp_diff_10") is None
-    assert data.get("gold_diff_15") is None
-    assert data.get("xp_diff_15") is None
+    # SR enrichment now uses expanded frame search with fallback
+    # So it should find the closest available frames and return data
+    assert data.get("cs_at_10") == 88  # 70 + 18 from 540s frame (closest to 600s)
+    assert data.get("gold_diff_10") == -100  # 4200 - 4300
+    assert data.get("xp_diff_10") == -100  # 5800 - 5900
+    assert data.get("cs_at_15") == 135  # 110 + 25 from 840s frame (closest to 900s)
+    assert data.get("gold_diff_15") == -200  # 6200 - 6400
+    assert data.get("xp_diff_15") == -200  # 8700 - 8900
