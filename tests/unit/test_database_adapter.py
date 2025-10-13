@@ -36,7 +36,7 @@ class TestDatabaseAdapter:
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
         with (
-            patch("asyncpg.create_pool", return_value=mock_pool) as mock_create,
+            patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as mock_create,
             patch("src.adapters.database.settings") as mock_settings,
         ):
             mock_settings.database_url = "postgresql://test"
@@ -178,7 +178,11 @@ class TestDatabaseAdapter:
         """Test successful match data save."""
         adapter._pool = mock_pool
         mock_conn = AsyncMock()
-        mock_conn.transaction.return_value.__aenter__.return_value = None
+        # Mock transaction() as async context manager
+        mock_transaction = AsyncMock()
+        mock_transaction.__aenter__ = AsyncMock(return_value=None)
+        mock_transaction.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.transaction.return_value = mock_transaction
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
         match_data = {
