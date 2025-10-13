@@ -11,12 +11,16 @@ from src.adapters.voice_broadcast_client import VoiceBroadcastHttpClient
 
 @pytest.mark.asyncio
 async def test_broadcast_success() -> None:
-    session = AsyncMock()
-    response = AsyncMock()
-    response.__aenter__.return_value = response
-    response.__aexit__.return_value = False
+    # Use MagicMock for session (not AsyncMock) to prevent coroutine wrapping
+    session = MagicMock()
+    session.closed = False  # Prevent _ensure_session from recreating session
+
+    # Mock response as async context manager (pattern from test_discord_webhook_components.py)
+    response = MagicMock()
     response.status = 200
     response.json = AsyncMock(return_value={"ok": True, "message": "stream_enqueued"})
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock()
     session.post.return_value = response
 
     with patch("src.adapters.voice_broadcast_client.get_settings") as mock_settings:
@@ -30,8 +34,9 @@ async def test_broadcast_success() -> None:
 
     assert ok is True
     assert message == "stream_enqueued"
-    session.post.assert_awaited_once()
-    call = session.post.await_args_list[0]
+    # MagicMock uses assert_called_once (not assert_awaited_once which is for AsyncMock)
+    session.post.assert_called_once()
+    call = session.post.call_args_list[0]
     args, kwargs = call
     assert args[0] == "http://localhost:3000/broadcast"
     assert kwargs["json"] == {"match_id": "NA1_1", "guild_id": 123, "user_id": 456}
@@ -40,12 +45,16 @@ async def test_broadcast_success() -> None:
 
 @pytest.mark.asyncio
 async def test_broadcast_handles_http_error() -> None:
-    session = AsyncMock()
-    response = AsyncMock()
-    response.__aenter__.return_value = response
-    response.__aexit__.return_value = False
+    # Use MagicMock for session (not AsyncMock) to prevent coroutine wrapping
+    session = MagicMock()
+    session.closed = False  # Prevent _ensure_session from recreating session
+
+    # Mock response as async context manager
+    response = MagicMock()
     response.status = 500
     response.json = AsyncMock(return_value={"ok": False, "error": "oops"})
+    response.__aenter__ = AsyncMock(return_value=response)
+    response.__aexit__ = AsyncMock()
     session.post.return_value = response
 
     with patch("src.adapters.voice_broadcast_client.get_settings") as mock_settings:
@@ -63,7 +72,9 @@ async def test_broadcast_handles_http_error() -> None:
 
 @pytest.mark.asyncio
 async def test_broadcast_handles_network_failure() -> None:
-    session = AsyncMock()
+    # Use MagicMock for session (not AsyncMock) to prevent coroutine wrapping
+    session = MagicMock()
+    session.closed = False  # Prevent _ensure_session from recreating session
     session.post.side_effect = RuntimeError("network down")
 
     with patch("src.adapters.voice_broadcast_client.get_settings") as mock_settings:
