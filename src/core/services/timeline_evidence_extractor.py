@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from src.contracts.v2_1_timeline_evidence import (
     V2_1_TimelineEvidence,
@@ -59,11 +59,23 @@ def extract_ward_control_evidence(
                     x = int(pos.get("x", 0) or 0)
                     y = int(pos.get("y", 0) or 0)
                     ts = int(ev.get("timestamp", 0) or 0)
+                    # Type coercion: ensure ward type is valid before creating event
+                    # API should only return these types, but we default to SIGHT_WARD if unknown
+                    if str(wt) not in (
+                        "YELLOW_TRINKET",
+                        "CONTROL_WARD",
+                        "BLUE_TRINKET",
+                        "SIGHT_WARD",
+                    ):
+                        wt = "SIGHT_WARD"
+                    ward_type_literal: Literal[
+                        "YELLOW_TRINKET", "CONTROL_WARD", "BLUE_TRINKET", "SIGHT_WARD"
+                    ] = str(wt)  # type: ignore[assignment]
                     events.append(
                         WardPlacementEvent(
                             timestamp_ms=ts,
                             timestamp_display=_fmt_ts(ts),
-                            ward_type=str(wt),
+                            ward_type=ward_type_literal,
                             position_x=x,
                             position_y=y,
                             position_label=_label(x, y),

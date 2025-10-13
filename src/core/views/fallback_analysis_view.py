@@ -14,6 +14,8 @@ Design Principles:
 - Consistent Branding: Matches main analysis view styling
 """
 
+from typing import Any
+
 import discord
 from pydantic import BaseModel, Field
 
@@ -51,7 +53,7 @@ class FallbackMatchData(BaseModel):
     )
 
 
-def render_fallback_analysis_embed(data: dict) -> discord.Embed:
+def render_fallback_analysis_embed(data: dict[str, Any]) -> discord.Embed:
     """Render fallback analysis embed for unsupported game modes.
 
     This function creates a friendly, informative embed that:

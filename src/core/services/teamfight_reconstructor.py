@@ -24,7 +24,7 @@ def _rdp(points: list[tuple[float, float]], eps: float) -> list[tuple[float, flo
     if len(points) <= 2:
         return points
 
-    def _dist(p, a, b) -> float:
+    def _dist(p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
         (x, y), (x1, y1), (x2, y2) = p, a, b
         if (x1, y1) == (x2, y2):
             return math.hypot(x - x1, y - y1)

@@ -26,7 +26,7 @@ def _find_frame_with_tolerance(
     *,
     window_ms: int = 15_000,
     require_participants: list[int] | None = None,
-) -> tuple[dict | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Resolve the closest frame to ``target_ms`` within a tolerance window.
 
     Args:
@@ -647,7 +647,7 @@ def extract_sr_enrichment(
         "atakhans": 0,
     }
 
-    def _count_objective(e2: dict[str, Any], target_dict: dict[str, int]):
+    def _count_objective(e2: dict[str, Any], target_dict: dict[str, int]) -> None:
         """Count objective in the target dictionary."""
         t = e2.get("type")
         if t == "BUILDING_KILL":

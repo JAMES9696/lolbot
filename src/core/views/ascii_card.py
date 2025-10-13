@@ -231,15 +231,15 @@ def build_ascii_card(report: Any) -> str:
         e = _val("economy_score")
         o = _val("objective_score")
         v = _val("vision_score")
-        t = _val("teamplay_score")
-        s = _val("survivability_score")
+        teamplay = _val("teamplay_score")
+        surv = _val("survivability_score")
         rows = [
             f"⚔ Combat {_bar20(c)}",
             f"💰 Econ   {_bar20(e)}",
             f"🎯 Obj    {_bar20(o)}",
             f"👁 Vision {_bar20(v)}",
-            f"🤝 Team   {_bar20(t)}",
-            f"💚 Surv   {_bar20(s)}",
+            f"🤝 Team   {_bar20(teamplay)}",
+            f"💚 Surv   {_bar20(surv)}",
         ]
         # Append extended SR rows
         g = ext_dims["Growth"]

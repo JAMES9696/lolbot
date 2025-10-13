@@ -22,7 +22,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Literal
 
 from celery import Task
 from pydantic import ValidationError
@@ -62,7 +62,9 @@ from src.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _map_game_mode_to_contract(mode_str: str) -> str:
+def _map_game_mode_to_contract(
+    mode_str: str,
+) -> Literal["summoners_rift", "aram", "arena", "unknown"]:
     """Map game mode string to TeamAnalysisReport contract format.
 
     Args:
@@ -71,7 +73,7 @@ def _map_game_mode_to_contract(mode_str: str) -> str:
     Returns:
         Contract-compliant mode: "summoners_rift", "aram", "arena", or "unknown"
     """
-    mapping = {
+    mapping: dict[str, Literal["summoners_rift", "aram", "arena", "unknown"]] = {
         "SR": "summoners_rift",
         "ARAM": "aram",
         "Arena": "arena",
@@ -466,18 +468,20 @@ def analyze_team_task(
             from src.adapters.discord_webhook import DiscordWebhookAdapter
 
             # Build TeamAnalysisReport for TEAM-first UI
-            team_report = _build_team_overview_report(
-                match_details=match_details,
-                timeline_data=timeline,
-                requester_puuid=requester_puuid,
-                region=region,
-                resolved_game_mode=metrics.get("game_mode"),
-                arena_score_data=(
-                    strategy_result.get("score_data")
-                    if metrics.get("game_mode") == "arena"
-                    else None
-                ),
-                workflow_metrics=metrics,
+            team_report = asyncio.get_event_loop().run_until_complete(
+                _build_team_overview_report(
+                    match_details=match_details,
+                    timeline_data=timeline,
+                    requester_puuid=requester_puuid,
+                    region=region,
+                    resolved_game_mode=metrics.get("game_mode"),
+                    arena_score_data=(
+                        strategy_result.get("score_data")
+                        if metrics.get("game_mode") == "arena"
+                        else None
+                    ),
+                    workflow_metrics=metrics,
+                )
             )
             # Attach Celery task id for observability (footer trace)
             with contextlib.suppress(Exception):
@@ -796,12 +800,14 @@ def analyze_team_task(
                 requester_puuid=requester_puuid,
             )
             # Build TeamOverview for delivery (TEAM-first)
-            team_report = _build_team_overview_report(
-                match_details=match_details,
-                timeline_data=timeline,
-                requester_puuid=requester_puuid,
-                region=region,
-                workflow_metrics=metrics,
+            team_report = loop.run_until_complete(
+                _build_team_overview_report(
+                    match_details=match_details,
+                    timeline_data=timeline,
+                    requester_puuid=requester_puuid,
+                    region=region,
+                    workflow_metrics=metrics,
+                )
             )
             webhook_adapter = DiscordWebhookAdapter()
             webhook_success = loop.run_until_complete(
@@ -969,22 +975,24 @@ async def _execute_v2_analysis(
             if ward_evidence.ward_events:
                 evidence_section += "- 关键眼位:\n"
                 for event in ward_evidence.ward_events[:3]:  # Show max 3 examples
-                    evidence_section += f"  * {event.timestamp} {event.ward_type} @ {event.position_label or '未知位置'}\n"
+                    evidence_section += f"  * {event.timestamp_display} {event.ward_type} @ {event.position_label or '未知位置'}\n"
 
             # Include sample kill events if available
             if combat_evidence.kill_events:
                 evidence_section += "- 关键战斗:\n"
-                for event in combat_evidence.kill_events[:3]:  # Show max 3 examples
+                for kill_event in combat_evidence.kill_events[:3]:  # Show max 3 examples
                     involvement = (
                         "击杀者"
-                        if event.killer_id == timeline_evidence.target_participant_id
+                        if kill_event.killer_participant_id
+                        == timeline_evidence.target_player_participant_id
                         else "被击杀"
-                        if event.victim_id == timeline_evidence.target_participant_id
+                        if kill_event.victim_participant_id
+                        == timeline_evidence.target_player_participant_id
                         else "助攻"
                     )
-                    evidence_section += f"  * {event.timestamp} {involvement} @ {event.position_label or '未知位置'}"
-                    if event.abilities_used:
-                        evidence_section += f" (使用技能: {', '.join([a.ability_name for a in event.abilities_used[:2]])})"
+                    evidence_section += f"  * {kill_event.timestamp_display} {involvement} @ {kill_event.position_label or '未知位置'}"
+                    if kill_event.abilities_used:
+                        evidence_section += f" (使用技能: {', '.join([a.ability_type for a in kill_event.abilities_used[:2]])})"
                     evidence_section += "\n"
 
         # Build user profile section (V2.2 enhancement)
@@ -1762,11 +1770,17 @@ def _build_final_analysis_report(
         factors["ui_sentiment"] = sentiment
         return sentiment, factors
 
-    def _canonicalize_sentiment(tag: str) -> str:
-        allowed = {"激动", "遗憾", "嘲讽", "鼓励", "平淡"}
+    def _canonicalize_sentiment(tag: str) -> Literal["激动", "遗憾", "嘲讽", "鼓励", "平淡"]:
+        allowed: set[Literal["激动", "遗憾", "嘲讽", "鼓励", "平淡"]] = {
+            "激动",
+            "遗憾",
+            "嘲讽",
+            "鼓励",
+            "平淡",
+        }
         if tag in allowed:
-            return tag
-        alias = {
+            return tag  # type: ignore[return-value]
+        alias: dict[str, Literal["激动", "遗憾", "嘲讽", "鼓励", "平淡"]] = {
             "关注": "鼓励",
             "反思": "平淡",
             "积极": "鼓励",
@@ -1779,7 +1793,7 @@ def _build_final_analysis_report(
 
     # Extract participant data
     participants = match_data.get("info", {}).get("participants", [])
-    target_participant = next(
+    target_participant: dict[str, Any] = next(
         (p for p in participants if p.get("puuid") == requester_puuid),
         {},
     )
@@ -1799,7 +1813,7 @@ def _build_final_analysis_report(
     champion_name = target_participant.get("championName", "Unknown")
     champion_id = target_participant.get("championId", 0)
     win = target_participant.get("win", False)
-    match_result = "victory" if win else "defeat"
+    match_result: Literal["victory", "defeat"] = "victory" if win else "defeat"
 
     # Build champion assets URL (static version OK for now)
     ddragon_version = "13.24.1"
@@ -1995,7 +2009,7 @@ def _build_final_analysis_report(
                 except Exception:
                     return 0.0
 
-            raw_stats = {}
+            raw_stats: dict[str, Any] = {}
             if isinstance(target_ps, dict):
                 raw_stats = target_ps.get("raw_stats", {}) or {}
             # Enrich raw_stats with mode hints（不做 SR 要点注入，避免 timeline 缺失时的错误数值）
@@ -2005,7 +2019,7 @@ def _build_final_analysis_report(
                 qid = int(match_data.get("info", {}).get("queueId", 420))
                 gm = detect_game_mode(qid)
                 raw_stats["queue_id"] = qid
-                raw_stats["game_mode"] = gm.mode
+                raw_stats["game_mode_label"] = gm.mode
                 raw_stats["is_arena"] = gm.mode == "Arena"
             except Exception:
                 pass
@@ -2132,6 +2146,8 @@ def _build_final_analysis_report(
                         or target_part.get("summonerName")
                         or target_part.get("gameName")
                         or "-"
+                        if target_part
+                        else "-"
                     ),
                     game_mode=detected_mode,
                 )
@@ -2194,7 +2210,7 @@ def _build_final_analysis_report(
             try:
                 augment_analysis = score_data.get("augment_analysis", {})
                 if isinstance(augment_analysis, dict):
-                    augments = augment_analysis.get("augments_selected", [])
+                    augments: list[Any] = augment_analysis.get("augments_selected", [])
                     if augments:
                         raw_stats["arena_augments"] = list(augments)
             except Exception:
@@ -2202,7 +2218,7 @@ def _build_final_analysis_report(
 
             # Round performances (compact format for display)
             try:
-                rounds = score_data.get("round_performances", [])
+                rounds: list[dict[str, Any]] = score_data.get("round_performances", [])
                 if rounds:
                     raw_stats["arena_rounds"] = [
                         {
@@ -2224,7 +2240,7 @@ def _build_final_analysis_report(
                         worst = max(
                             rounds, key=lambda x: (x.get("deaths", 0), x.get("damage_taken", 0))
                         )
-                        raw_stats["arena_key_rounds"] = {
+                        arena_key_rounds: dict[str, dict[str, Any]] = {
                             "best": {
                                 "n": best.get("round_number"),
                                 "k": best.get("kills", 0),
@@ -2238,11 +2254,13 @@ def _build_final_analysis_report(
                                 "r": worst.get("round_result"),
                             },
                         }
+                        raw_stats["arena_key_rounds"] = arena_key_rounds
             except Exception:
                 pass
 
             arena_sentiment, sentiment_factors = _compute_arena_sentiment(score_data, raw_stats)
-            raw_stats["arena_sentiment_factors"] = sentiment_factors
+            sentiment_factors_dict: dict[str, Any] = sentiment_factors
+            raw_stats["arena_sentiment_factors"] = sentiment_factors_dict
             raw_stats.setdefault("arena_rounds_played", sentiment_factors["rounds_played"])
             raw_stats.setdefault("arena_round_count", sentiment_factors["rounds_played"])
             raw_stats.setdefault("arena_rounds_won", sentiment_factors["rounds_won"])
@@ -2307,7 +2325,7 @@ def _build_final_analysis_report(
     )
 
 
-def _build_team_overview_report(
+async def _build_team_overview_report(
     *,
     match_details: dict[str, Any],
     timeline_data: dict[str, Any],
@@ -2440,21 +2458,23 @@ def _build_team_overview_report(
 
     win = bool(target_p.get("win", False)) if target_p else False
     # Detect/correct game mode (prefer early-resolved label when provided)
-    gm_label = resolved_game_mode or "unknown"
-    if gm_label not in {"summoners_rift", "aram", "arena", "unknown"}:
+    gm_label_str = resolved_game_mode or "unknown"
+    if gm_label_str not in {"summoners_rift", "aram", "arena", "unknown"}:
         try:
             from src.contracts.v23_multi_mode_analysis import detect_game_mode
 
             qid = int(info.get("queueId", 0) or 0)
             gm = detect_game_mode(qid)
-            gm_label = _map_game_mode_to_contract(
+            gm_label_str = _map_game_mode_to_contract(
                 gm.mode if isinstance(gm.mode, str) else "Fallback"
             )
             parts_len = len(info.get("participants", []) or [])
-            if gm_label == "arena" and parts_len == 10:
-                gm_label = "summoners_rift"
+            if gm_label_str == "arena" and parts_len == 10:
+                gm_label_str = "summoners_rift"
         except Exception:
-            gm_label = "unknown"
+            gm_label_str = "unknown"
+    # Type narrowing: at this point gm_label_str is guaranteed to be one of the allowed values
+    gm_label: Literal["summoners_rift", "aram", "arena", "unknown"] = gm_label_str  # type: ignore[assignment]
 
     # Arena duo enrichment (for specialized view)
     arena_duo = None
@@ -2782,7 +2802,7 @@ def _build_team_overview_report(
                         opgg = None
 
                 enricher = TeamBuildsEnricher(dd, opgg)
-                enrich_text, enrich_payload = enricher.build_summary_for_target(
+                enrich_text, enrich_payload = await enricher.build_summary_for_target(
                     match_details,
                     target_puuid=target_puuid or "",
                     target_name=target_name,
@@ -2845,6 +2865,8 @@ def _build_team_overview_report(
     if workflow_metrics:
 
         def _metric_value(*keys: str) -> float | None:
+            if workflow_metrics is None:
+                return None
             for key in keys:
                 if key in workflow_metrics and workflow_metrics[key] is not None:
                     try:

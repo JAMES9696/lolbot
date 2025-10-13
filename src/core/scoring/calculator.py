@@ -167,7 +167,7 @@ def calculate_economic_management(timeline: MatchTimeline, participant_id: int) 
     }
 
 
-def calculate_objective_control(timeline: MatchTimeline, participant_id: int) -> dict[str, float]:
+def calculate_objective_control(timeline: MatchTimeline, participant_id: int) -> dict[str, Any]:
     """Calculate objective control metrics.
 
     Returns:
@@ -903,6 +903,7 @@ def calculate_total_score(
         "objective_personal_score": float(objective.get("personal_objective_score", 0.0)),
         "objective_team_conversion_rate": float(objective.get("team_conversion_rate", 0.0)),
         "objective_team_conversions": int(objective.get("team_post_kill_conversions", 0)),
+        "objective_team_conversion_breakdown": objective.get("team_conversion_breakdown", {}),
         # Multi-kills & Sprees (from Match-V5 Details)
         "double_kills": participant_data.get("doubleKills", 0) if participant_data else 0,
         "triple_kills": participant_data.get("tripleKills", 0) if participant_data else 0,

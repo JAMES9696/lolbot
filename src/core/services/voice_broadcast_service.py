@@ -32,7 +32,7 @@ class VoiceBroadcastService:
     DRY: Reuse DiscordAdapter.play_tts_in_voice_channel for actual playback.
     """
 
-    def __init__(self, discord_adapter: "DiscordAdapter") -> None:  # type: ignore[name-defined]
+    def __init__(self, discord_adapter: "DiscordAdapter") -> None:
         self._adapter = discord_adapter
         self._queues: dict[int, asyncio.Queue[VoiceJob]] = {}
         self._workers: dict[int, asyncio.Task[None]] = {}

@@ -61,42 +61,42 @@ _registry = CollectorRegistry() if _PROMETHEUS_AVAILABLE else None
 # Counters
 # ============================================================================
 
-chimera_analyze_requests_total = Counter(  # type: ignore[call-arg]
+chimera_analyze_requests_total = Counter(
     "chimera_analyze_requests_total",
     "Total analysis requests by status and mode",
     labelnames=("status", "mode"),
     registry=_registry,
 )
 
-chimera_llm_tokens_total = Counter(  # type: ignore[call-arg]
+chimera_llm_tokens_total = Counter(
     "chimera_llm_tokens_total",
     "LLM token usage by type, model, and mode",
     labelnames=("type", "model", "mode"),
     registry=_registry,
 )
 
-chimera_llm_cost_usd_total_by_mode = Counter(  # type: ignore[call-arg]
+chimera_llm_cost_usd_total_by_mode = Counter(
     "chimera_llm_cost_usd_total_by_mode",
     "Accumulated LLM API cost in USD by game mode",
     labelnames=("model", "game_mode"),
     registry=_registry,
 )
 
-chimera_json_validation_errors_total_by_mode = Counter(  # type: ignore[call-arg]
+chimera_json_validation_errors_total_by_mode = Counter(
     "chimera_json_validation_errors_total_by_mode",
     "JSON validation failures by schema, error type, json mode and game mode",
     labelnames=("schema", "error", "mode", "game_mode"),
     registry=_registry,
 )
 
-chimera_external_api_errors_total = Counter(  # type: ignore[call-arg]
+chimera_external_api_errors_total = Counter(
     "chimera_external_api_errors_total",
     "External API errors by service and error type",
     labelnames=("service", "error_type"),
     registry=_registry,
 )
 
-chimera_riot_api_requests_total = Counter(  # type: ignore[call-arg]
+chimera_riot_api_requests_total = Counter(
     "chimera_riot_api_requests_total",
     "Riot API requests by endpoint and status",
     labelnames=("endpoint", "status"),
@@ -107,7 +107,7 @@ chimera_riot_api_requests_total = Counter(  # type: ignore[call-arg]
 # Gauges (dynamic)
 # ============================================================================
 
-chimera_celery_queue_length = Gauge(  # type: ignore[call-arg]
+chimera_celery_queue_length = Gauge(
     "chimera_celery_queue_length",
     "Celery queue length by queue name",
     labelnames=("queue",),
@@ -118,7 +118,7 @@ chimera_celery_queue_length = Gauge(  # type: ignore[call-arg]
 # Histograms
 # ============================================================================
 
-chimera_request_duration_seconds = Histogram(  # type: ignore[call-arg]
+chimera_request_duration_seconds = Histogram(
     "chimera_request_duration_seconds",
     "Request duration in seconds by endpoint and status",
     labelnames=("endpoint", "status"),

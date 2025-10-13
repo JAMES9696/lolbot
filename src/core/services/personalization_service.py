@@ -16,12 +16,16 @@ Key Responsibilities:
 """
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.contracts.v21_prescriptive_analysis import (
     V21PrescriptiveAnalysisInput,
     V21PrescriptiveAnalysisReport,
 )
 from src.contracts.v22_user_profile import V22UserProfile
+
+if TYPE_CHECKING:
+    from src.adapters.gemini_llm import GeminiLLMAdapter
 
 
 class PersonalizationService:
@@ -233,7 +237,7 @@ class PersonalizationService:
         self,
         user_profile: V22UserProfile,
         analysis_input: V21PrescriptiveAnalysisInput,
-        llm_adapter,  # Type: adapters.gemini_llm.GeminiLLMAdapter
+        llm_adapter: "GeminiLLMAdapter",
     ) -> V21PrescriptiveAnalysisReport:
         """Generate personalized V2.1 prescriptive analysis.
 

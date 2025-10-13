@@ -16,7 +16,7 @@ Phase: V2.3
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from src.contracts.v23_multi_mode_analysis import (
     AnalysisStrategy,
@@ -138,7 +138,8 @@ class FallbackStrategy(AnalysisStrategy):
             summoner_name = target_participant.get("summonerName", "Unknown")
             champion_name = target_participant.get("championName", "Unknown")
             win = target_participant.get("win", False)
-            match_result = "victory" if win else "defeat"
+            # Type coercion: force string to Literal type
+            match_result: Literal["victory", "defeat"] = "victory" if win else "defeat"
 
             # Step 4: Detect game mode
             game_mode = detect_game_mode(queue_id)

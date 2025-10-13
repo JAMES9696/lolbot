@@ -19,7 +19,7 @@ from typing import Any
 import discord
 
 from src.contracts.v21_prescriptive_analysis import (
-    V21ActionableAdvice,
+    V21ImprovementSuggestion,
     V21PrescriptiveAnalysisReport,
 )
 
@@ -71,7 +71,7 @@ class PrescriptiveAnalysisView(discord.ui.View):
 
         # Create advice-specific feedback view
         feedback_view = AdviceFeedbackView(
-            advice_list=self.report.actionable_advice,
+            advice_list=self.report.improvement_suggestions,
             match_id=self.match_id,
         )
 
@@ -100,7 +100,7 @@ class PrescriptiveAnalysisView(discord.ui.View):
         # Sort advice by priority (high > medium > low)
         priority_order = {"high": 0, "medium": 1, "low": 2}
         sorted_advice = sorted(
-            self.report.actionable_advice,
+            self.report.improvement_suggestions,
             key=lambda a: priority_order.get(a.priority, 999),
         )
 
@@ -113,13 +113,21 @@ class PrescriptiveAnalysisView(discord.ui.View):
             }.get(advice.priority, "⚪")
 
             # Dimension-specific icon
-            dimension_emoji = advice.icon_emoji
+            dimension_emoji_map = {
+                "Combat": "⚔️",
+                "Economy": "💰",
+                "Vision": "👁️",
+                "Objective Control": "🎯",
+                "Teamplay": "🤝",
+            }
+            dimension_emoji = dimension_emoji_map.get(advice.dimension, "📊")
 
             # Compact field layout for mobile
-            field_name = f"{priority_emoji} {idx}. {dimension_emoji} {advice.title}"
+            field_name = f"{priority_emoji} {idx}. {dimension_emoji} {advice.dimension}"
             field_value = (
-                f"**建议：** {advice.description}\n"
-                f"**预期效果：** {advice.expected_impact}\n"
+                f"**问题：** {advice.issue_identified}\n"
+                f"**建议：** {advice.action_item}\n"
+                f"**预期效果：** {advice.expected_outcome}\n"
                 f"**优先级：** {advice.priority.upper()}"
             )
 
@@ -131,7 +139,7 @@ class PrescriptiveAnalysisView(discord.ui.View):
 
         # Footer with compliance notice
         embed.set_footer(
-            text=f"赛后训练工具 | 符合 Riot 游戏诚信政策 | Variant: {self.report.variant_id or 'N/A'}"
+            text=f"赛后训练工具 | 符合 Riot 游戏诚信政策 | {self.report.algorithm_version}"
         )
 
         return embed
@@ -152,7 +160,7 @@ class AdviceFeedbackView(discord.ui.View):
 
     def __init__(
         self,
-        advice_list: list[V21ActionableAdvice],
+        advice_list: list[V21ImprovementSuggestion],
         match_id: str,
         timeout: float = 900.0,
     ) -> None:
@@ -240,8 +248,8 @@ def render_v21_prescriptive_analysis(
         title=f"{result_emoji} V2.1 指导性分析",
         description=(
             f"**Match ID:** `{report.match_id}`\n"
-            f"**目标玩家:** {report.target_player_name}\n\n"
-            f"**团队整体评价：** {report.team_summary_insight or '暂无'}"
+            f"**目标玩家:** {report.summoner_name}\n\n"
+            f"**团队整体评价：** {report.coaching_summary or '暂无'}"
         ),
         color=0x5865F2 if report.match_result == "victory" else 0xE74C3C,
     )
@@ -249,7 +257,7 @@ def render_v21_prescriptive_analysis(
     # Show advice count as teaser
     summary_embed.add_field(
         name="💡 改进建议",
-        value=f"已生成 **{len(report.actionable_advice)}** 条行动导向建议。\n点击下方按钮查看详细内容。",
+        value=f"已生成 **{len(report.improvement_suggestions)}** 条行动导向建议。\n点击下方按钮查看详细内容。",
         inline=False,
     )
 
@@ -257,7 +265,7 @@ def render_v21_prescriptive_analysis(
     from src.core.views.analysis_view import _format_duration_ms
 
     summary_embed.set_footer(
-        text=f"A/B Cohort: {report.ab_cohort or 'N/A'} | {_format_duration_ms(report.processing_duration_ms)} | V2.1"
+        text=f"{report.algorithm_version} | {_format_duration_ms(report.generation_latency_ms or 0)}"
     )
 
     return summary_embed, view

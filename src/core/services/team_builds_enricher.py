@@ -295,7 +295,7 @@ class OPGGAdapter:
         # 不抛出，失败则保持可用性为 False。
         try:
             try:
-                mod = __import__("opgg.v2.opgg", fromlist=["OPGG"])  # type: ignore[reportAny]
+                mod = __import__("opgg.v2.opgg", fromlist=["OPGG"])
                 self._impl = mod.OPGG()
                 self._backend = "v2"
             except Exception:
