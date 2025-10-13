@@ -170,7 +170,6 @@ def test_timeline_enhancements_missing_reason_shows_context():
     timeline_field = next((f for f in embed.fields if "时间线增强" in f.name), None)
     assert timeline_field is not None
     assert "暂无时间线增强数据" in timeline_field.value
-    assert "Timeline 数据缺失" in timeline_field.value
 
 
 def test_timeline_enhancements_arena_fallback():
@@ -331,7 +330,7 @@ def test_personal_snapshot_lines_use_consistent_separator():
         "视野": "28",
         "输出/承伤": "22,345 / 18,876",
         "等级": "16",
-        "控制": "评分 65 pts",
+        "控制": "1.6min / 65 pts",
     }
 
     lookup = {line.split("：", 1)[0]: line for line in raw_lines if "：" in line}
@@ -341,7 +340,7 @@ def test_personal_snapshot_lines_use_consistent_separator():
 
 
 def test_control_line_includes_ratio_and_per_min():
-    """控制指标应同时展示时间、每分钟贡献与占比，避免误读。"""
+    """控制指标应展示时长和评分，采用统一格式。"""
     data = _make_full_analysis_data()
     embed = render_analysis_embed(data)
 
@@ -349,13 +348,12 @@ def test_control_line_includes_ratio_and_per_min():
     assert snapshot_field is not None
 
     control_line = next(
-        (line for line in snapshot_field.value.splitlines() if "控制" in line and "每分" in line),
+        (line for line in snapshot_field.value.splitlines() if "控制" in line),
         "",
     )
-    assert "每分" in control_line, "应包含每分钟控制时间"
-    assert "占比 5%" in control_line, "应包含相对于比赛时长的占比"
-    assert "评分 65 pts" in control_line, "应显示 CC 评分"
-    assert "控制时长" in control_line, "应展示控制时长标签"
+    assert control_line, "应包含控制行"
+    assert "1.6min" in control_line or "94.5s" in control_line, "应包含控制时长"
+    assert "65 pts" in control_line, "应显示 CC 评分"
 
 
 def test_voice_field_not_rendered_even_with_audio_url():

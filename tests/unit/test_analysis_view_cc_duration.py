@@ -71,16 +71,14 @@ def test_cc_duration_under_minute_shows_seconds():
     embed = render_analysis_embed(_make_analysis_data(42.4, cc_score=12.0))
     snapshot = _extract_snapshot_field(embed)
     assert "控制" in snapshot
-    assert "控制时长 42.4s" in snapshot
-    assert "评分 12 pts" in snapshot
+    assert "42.4s / 12 pts" in snapshot
 
 
 def test_cc_duration_over_minute_shows_minutes_with_single_decimal():
     embed = render_analysis_embed(_make_analysis_data(424.109, cc_score=180.0))
     snapshot = _extract_snapshot_field(embed)
     assert "控制" in snapshot
-    assert "控制时长 7.1min" in snapshot
-    assert "评分 180 pts" in snapshot
+    assert "7.1min / 180 pts" in snapshot
 
 
 def test_footer_contains_observability_metrics() -> None:
