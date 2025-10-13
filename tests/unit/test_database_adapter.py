@@ -178,11 +178,15 @@ class TestDatabaseAdapter:
         """Test successful match data save."""
         adapter._pool = mock_pool
         mock_conn = AsyncMock()
-        # Mock transaction() as async context manager
-        mock_transaction = AsyncMock()
-        mock_transaction.__aenter__ = AsyncMock(return_value=None)
-        mock_transaction.__aexit__ = AsyncMock(return_value=None)
-        mock_conn.transaction.return_value = mock_transaction
+        # Mock transaction() method to return a proper async context manager
+        # Use contextlib.asynccontextmanager to create a real async context manager
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_transaction_cm():
+            yield None
+
+        mock_conn.transaction = MagicMock(return_value=mock_transaction_cm())
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
 
         match_data = {
