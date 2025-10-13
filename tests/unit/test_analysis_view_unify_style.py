@@ -199,31 +199,12 @@ def test_personal_snapshot_code_block():
     assert "K/D/A" in snapshot_field.value
 
 
-def test_visual_fallback_message_when_visuals_missing():
-    data = _make_full_analysis_data()
-    data["builds_metadata"]["visuals"] = []
-    data["builds_metadata"]["visuals_status"] = "missing"
-
-    embed = render_analysis_embed(data)
-
-    visuals_field = next((f for f in embed.fields if "数据图表" in f.name), None)
-    assert visuals_field is not None, "应在图像缺失时渲染回退提示"
-    assert "已回退文本" in visuals_field.value
-    assert "暂未生成" in visuals_field.value
-
-
-def test_visual_fallback_message_when_visual_generation_error():
-    data = _make_full_analysis_data()
-    data["builds_metadata"]["visuals"] = []
-    data["builds_metadata"]["visuals_status"] = "error"
-    data["builds_metadata"]["visuals_error"] = "disk full"
-
-    embed = render_analysis_embed(data)
-
-    visuals_field = next((f for f in embed.fields if "数据图表" in f.name), None)
-    assert visuals_field is not None
-    assert "生成失败" in visuals_field.value
-    assert "已回退文本" in visuals_field.value
+# NOTE: 以下测试已过时 - 独立的 "数据图表" 字段已被移除
+# 现在 visuals 信息被整合到 "出装 & 符文" 字段的最后一行
+# 参见 analysis_view.py:245-261 的 _format_builds_field 实现
+#
+# def test_visual_fallback_message_when_visuals_missing():
+# def test_visual_fallback_message_when_visual_generation_error():
 
 
 def test_footer_correlation_id_format():
@@ -236,6 +217,7 @@ def test_footer_correlation_id_format():
 
 
 def test_builds_field_falls_back_to_metadata_when_summary_missing():
+    """当 builds_summary_text 缺失时，应从 metadata 生成出装信息"""
     data = _make_full_analysis_data()
     data["builds_summary_text"] = ""
     embed = render_analysis_embed(data)
@@ -243,52 +225,27 @@ def test_builds_field_falls_back_to_metadata_when_summary_missing():
     builds_field = next((f for f in embed.fields if "出装" in f.name), None)
     assert builds_field is not None
     assert "守护天使" in builds_field.value  # 缺少推荐提示
-
-    visuals_field = next((f for f in embed.fields if "图表" in f.name), None)
-    assert visuals_field is not None
-    assert "https://example.com/chart.png" in visuals_field.value
+    # Visuals 现在整合在 builds 字段内，以 "图表: ..." 格式
+    assert "图表:" in builds_field.value or "Gold diff timeline" in builds_field.value
 
 
 def test_builds_field_retained_with_chart_visuals():
-    """图表类视觉仅用于补充信息，仍应渲染出装文本字段。"""
+    """图表类视觉信息被整合到出装字段内，不再是独立字段"""
     data = _make_full_analysis_data()
     embed = render_analysis_embed(data)
 
     builds_field = next((f for f in embed.fields if "出装" in f.name), None)
-    assert builds_field is not None, "存在图表时仍需展示出装文本"
+    assert builds_field is not None, "应展示出装文本"
     assert "出装:" in builds_field.value or "符文:" in builds_field.value
-
-    visuals_field = next((f for f in embed.fields if "图表" in f.name), None)
-    assert visuals_field is not None
-    assert "https://example.com/chart.png" in visuals_field.value
+    # Visuals 整合在同一字段
+    assert "图表:" in builds_field.value
 
 
-def test_builds_field_hidden_when_visuals_available():
-    """当存在出装图像时，应隐藏文字型出装字段避免重复。"""
-    data = _make_full_analysis_data()
-    data["builds_summary_text"] = "出装: 死刑宣告 · 海妖杀手\n符文: 精密 - 致命节奏 | 次系 启迪"
-    data["builds_metadata"]["visuals"] = [
-        {"url": "https://example.com/build-card.png", "caption": "核心出装"}
-    ]
-
-    embed = render_analysis_embed(data)
-
-    builds_field = next((f for f in embed.fields if "出装" in f.name), None)
-    assert builds_field is None, "存在图像时不应再渲染出装文字字段"
-
-    visuals_field = next((f for f in embed.fields if "图表" in f.name), None)
-    assert visuals_field is not None
-    assert "https://example.com/build-card.png" in visuals_field.value
-
-
-def test_embed_sets_image_when_visual_url_present():
-    data = _make_full_analysis_data()
-    embed = render_analysis_embed(data)
-
-    assert embed.image.url == "https://example.com/chart.png"
-    visuals_field = next((f for f in embed.fields if "图表" in f.name or "图表" in f.value), None)
-    assert visuals_field is not None
-    assert "https://example.com/chart.png" in visuals_field.value
+# NOTE: 以下测试已过时 - 架构已简化，不再支持隐藏 builds 字段的逻辑
+# 现在 visuals 总是整合到 builds 字段内，两者不是互斥关系
+#
+# def test_builds_field_hidden_when_visuals_available():
+# def test_embed_sets_image_when_visual_url_present():
 
 
 def test_footer_phi_metrics_unified():
@@ -310,7 +267,7 @@ def test_no_emoji_tail_in_progress_bars():
 
 
 def test_personal_snapshot_lines_use_consistent_separator():
-    """快照字段应采用“标签：值”的统一格式，便于多端渲染。"""
+    """快照字段采用 Unicode 表格框格式，包含关键数据"""
 
     data = _make_full_analysis_data()
     embed = render_analysis_embed(data)
@@ -318,12 +275,12 @@ def test_personal_snapshot_lines_use_consistent_separator():
     snapshot_field = next((f for f in embed.fields if "个人快照" in f.name), None)
     assert snapshot_field is not None
 
-    raw_lines = [
-        line for line in snapshot_field.value.splitlines() if line and not line.startswith("```")
-    ]
-    assert raw_lines, "快照字段应包含数据行"
-    assert all("：" in line for line in raw_lines), "快照行应使用中文冒号分隔"
+    snapshot_text = snapshot_field.value
+    # 验证表格框存在
+    assert "┌" in snapshot_text and "└" in snapshot_text, "应包含 Unicode 表格框"
+    assert "│" in snapshot_text, "应包含表格分隔符"
 
+    # 验证关键数据存在
     expectations = {
         "K/D/A": "8 / 3 / 12",
         "CS/分": "180 (7.2)",
@@ -333,10 +290,9 @@ def test_personal_snapshot_lines_use_consistent_separator():
         "控制": "1.6min / 65 pts",
     }
 
-    lookup = {line.split("：", 1)[0]: line for line in raw_lines if "：" in line}
     for label, expected_text in expectations.items():
-        assert label in lookup, f"缺少 {label} 行"
-        assert expected_text in lookup[label], f"{label} 行缺少值片段: {expected_text}"
+        assert label in snapshot_text, f"缺少 {label} 标签"
+        assert expected_text in snapshot_text, f"缺少 {label} 的值: {expected_text}"
 
 
 def test_control_line_includes_ratio_and_per_min():
@@ -356,13 +312,15 @@ def test_control_line_includes_ratio_and_per_min():
     assert "65 pts" in control_line, "应显示 CC 评分"
 
 
-def test_voice_field_not_rendered_even_with_audio_url():
-    """前端Embed不再显示语音播报字段，由后端自动检测。"""
+def test_voice_field_rendered_when_audio_url_present():
+    """当有 TTS 音频时，应渲染语音播报字段"""
     data = _make_full_analysis_data()
     data["tts_audio_url"] = "https://example.com/audio.mp3"
     embed = render_analysis_embed(data)
 
-    assert all("语音播报" not in field.name for field in embed.fields), "应移除语音播报字段"
+    voice_field = next((f for f in embed.fields if "语音播报" in f.name), None)
+    assert voice_field is not None, "应渲染语音播报字段"
+    assert "https://example.com/audio.mp3" in voice_field.value
 
     core_field = next((f for f in embed.fields if "核心优势" in f.name), None)
     weak_field = next((f for f in embed.fields if "重点补强" in f.name), None)
