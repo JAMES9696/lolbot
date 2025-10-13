@@ -155,52 +155,53 @@ class TestRiotAPIAdapter:
 
     @pytest.mark.asyncio
     async def test_get_match_details_success(self, adapter):
-        """Test successful match details retrieval."""
-        # Mock match object
-        mock_match = MagicMock()
-        mock_match.id = "NA1_1000000"
-        mock_match.creation.timestamp.return_value = 1609459200
-        mock_match.duration.seconds = 1800
-        mock_match.start.timestamp.return_value = 1609459200
-        mock_match.mode.value = "CLASSIC"
-        mock_match.type.value = "MATCHED_GAME"
-        mock_match.version = "11.1.1"
-        mock_match.map.id = 11
-        mock_match.platform.value = "NA1"
-        mock_match.queue = MagicMock()
-        mock_match.queue.id = 420
+        """Test successful match details retrieval via direct HTTP API."""
+        # Mock HTTP response with match details
+        mock_match_data = {
+            "metadata": {"matchId": "NA1_1000000", "participants": ["puuid_0", "puuid_1"]},
+            "info": {
+                "gameId": 1000000,
+                "gameCreation": 1609459200000,
+                "gameDuration": 1800,
+                "platformId": "NA1",
+                "queueId": 420,
+                "participants": [
+                    {
+                        "puuid": f"puuid_{i}",
+                        "summonerId": f"summoner_{i}",
+                        "summonerName": f"Player{i}",
+                        "teamId": 100 if i < 5 else 200,
+                        "participantId": i + 1,
+                        "championId": 1 + i,
+                        "championName": f"Champion{i}",
+                        "kills": i,
+                        "deaths": i + 1,
+                        "assists": i + 2,
+                        "goldEarned": 10000 + i * 1000,
+                        "totalDamageDealt": 50000 + i * 5000,
+                        "visionScore": 20 + i,
+                        "win": i < 5,
+                    }
+                    for i in range(10)
+                ],
+            },
+        }
 
-        # Mock participants
-        mock_participants = []
-        for i in range(10):
-            mock_participant = MagicMock()
-            mock_participant.summoner.puuid = f"puuid_{i}"
-            mock_participant.summoner.id = f"summoner_{i}"
-            mock_participant.summoner.name = f"Player{i}"
-            mock_participant.team.side.value = 100 if i < 5 else 200
-            mock_participant.id = i + 1
-            mock_participant.champion.id = 1 + i
-            mock_participant.champion.name = f"Champion{i}"
-            mock_participant.stats = MagicMock(
-                kills=i,
-                deaths=i + 1,
-                assists=i + 2,
-                gold_earned=10000 + i * 1000,
-                total_damage_dealt=50000 + i * 5000,
-                vision_score=20 + i,
-                win=(i < 5),
-            )
-            mock_participants.append(mock_participant)
+        # Mock aiohttp session and response
+        session = MagicMock()
+        session.closed = False
 
-        mock_match.participants = mock_participants
+        response = MagicMock()
+        response.status = 200
+        response.json = AsyncMock(return_value=mock_match_data)
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock()
+        session.get.return_value = response
 
-        with patch("asyncio.to_thread") as mock_to_thread:
-            mock_to_thread.side_effect = [
-                mock_match,
-                None,
-            ]  # Load doesn't return anything
+        adapter._session = session
+        adapter._session_loop = asyncio.get_running_loop()
 
-            result = await adapter.get_match_details("NA1_1000000", "NA")
+        result = await adapter.get_match_details("NA1_1000000", "NA")
 
         assert result is not None
         assert "metadata" in result
