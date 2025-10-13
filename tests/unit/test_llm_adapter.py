@@ -271,8 +271,10 @@ async def test_analyze_match_success(mock_settings, sample_match_data, sample_sy
             # Verify generate_content was called with formatted prompt
             mock_model_instance.generate_content.assert_called_once()
             call_args = mock_model_instance.generate_content.call_args[0][0]
-            assert "NA1_4830294840" in call_args
-            assert "TestPlayer" in call_args
+            # call_args is now a list of dicts with 'parts' and 'role' (structured Gemini API format)
+            call_args_str = str(call_args)
+            assert "NA1_4830294840" in call_args_str
+            assert "TestPlayer" in call_args_str
 
 
 # --- Test Cases: API Error Handling ---
