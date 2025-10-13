@@ -202,7 +202,7 @@ class Participant(BaseContract):
     missions: dict[str, Any] | None = Field(None)
     placement: int | None = Field(None, ge=1, le=10)
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[misc]
     @property
     def kda(self) -> float:
         """Calculate KDA ratio."""
@@ -210,7 +210,7 @@ class Participant(BaseContract):
             return float(self.kills + self.assists)
         return (self.kills + self.assists) / self.deaths
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field  # type: ignore[misc]
     @property
     def kill_participation_percent(self) -> float | None:
         """Get kill participation from challenges or return None."""

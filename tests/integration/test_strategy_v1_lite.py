@@ -7,12 +7,6 @@ from src.core.services.strategies.arena_strategy import ArenaStrategy
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="ARAM strategy requires architectural fix: generate_aram_analysis_report creates "
-    "V23ARAMAnalysisReport with empty analysis_summary/improvement_suggestions, "
-    "failing Pydantic validation before LLM can fill these fields. "
-    "This causes immediate degradation to fallback strategy."
-)
 async def test_aram_strategy_v1_lite_happy_path(monkeypatch):
     # Mock GeminiLLMAdapter to avoid network
     class _FakeLLM:
@@ -33,7 +27,7 @@ async def test_aram_strategy_v1_lite_happy_path(monkeypatch):
                 ensure_ascii=False,
             )
 
-    monkeypatch.setattr("src.adapters.gemini_llm.GeminiLLMAdapter", _FakeLLM)
+    monkeypatch.setattr("src.core.services.strategies.aram_strategy.GeminiLLMAdapter", _FakeLLM)
 
     strategy = ARAMStrategy()
 

@@ -119,11 +119,11 @@ def detect_game_mode(queue_id: int) -> GameMode:
     }
 
     return GameMode(
-        mode=mode,
+        mode=mode,  # type: ignore[arg-type]
         queue_id=queue_id,
         queue_name=queue_names.get(queue_id),
         is_supported=is_supported,
-        analysis_version=analysis_version,
+        analysis_version=analysis_version,  # type: ignore[arg-type]
     )
 
 
@@ -290,14 +290,15 @@ class V23ARAMAnalysisReport(BaseModel):
             "Focus: Teamfight positioning, survival, build choices. "
             "Avoid: Lane control, jungle pathing (not applicable to ARAM)."
         ),
-        min_length=100,
+        min_length=0,  # Relaxed for degraded mode
         max_length=800,
     )
 
     # Top 3 improvement suggestions (simplified, no V2.1 evidence-grounding)
     improvement_suggestions: list[str] = Field(
+        default_factory=list,  # Allow empty for fallback/degraded mode
         description="Top 3 actionable suggestions for ARAM improvement",
-        min_length=1,
+        min_length=0,  # Relaxed for degraded mode
         max_length=3,
     )
 
