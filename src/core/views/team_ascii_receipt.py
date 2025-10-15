@@ -36,6 +36,8 @@ def build_team_receipt(report: Any) -> str:
         ("Obj", [float(getattr(p, "objective_score", 0.0)) for p in players]),
         ("Team", [float(getattr(p, "teamplay_score", 0.0)) for p in players]),
     ]
+    if mode == "aram":
+        dims = [entry for entry in dims if entry[0] not in {"Vision", "Obj"}]
     if players and hasattr(players[0], "survivability_score"):
         dims.append(("Surv", [float(getattr(p, "survivability_score", 0.0)) for p in players]))
 

@@ -28,6 +28,12 @@ class TeamPlayerEntry(BaseModel):
     objective_score: float = Field(ge=0, le=100)
     teamplay_score: float = Field(ge=0, le=100)
     overall_score: float = Field(ge=0, le=100)
+    kills: int = Field(default=0, ge=0, description="Kills in match")
+    deaths: int = Field(default=0, ge=0, description="Deaths in match")
+    assists: int = Field(default=0, ge=0, description="Assists in match")
+    damage_dealt: int = Field(
+        default=0, ge=0, description="Total damage dealt to champions in match"
+    )
     survivability_score: float | None = Field(
         default=None,
         ge=0,
@@ -69,7 +75,16 @@ class TeamAnalysisReport(BaseModel):
     )
 
     players: list[TeamPlayerEntry] = Field(min_length=5, max_length=5)
+    opponent_players: list[TeamPlayerEntry] | None = Field(
+        default=None,
+        description="Optional opponent team entries (5 players)",
+        min_length=5,
+        max_length=5,
+    )
     aggregates: TeamAggregates
+    opponent_aggregates: TeamAggregates | None = Field(
+        default=None, description="Aggregated metrics for opponent team"
+    )
 
     # Optional narrative or highlights (backend-provided)
     summary_text: str | None = Field(default=None, max_length=1900)

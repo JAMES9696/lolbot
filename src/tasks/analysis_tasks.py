@@ -255,6 +255,285 @@ _TTS_MIN_CHARS = 60
 _TTS_MAX_CHARS_HARD = 230  # 降低以缩小与 _TTS_MAX_CHARS (220) 的差距
 _TTS_SENTENCE_SPLIT = re.compile(r"[。！？!?]+")
 
+# ===== TTS Guardrails (Ledger + Sanitizer) =====
+# 温和模式：允许少量风格化，但主体（英雄/模式/资源）与数字必须来自 ledger。
+# 提供公开函数作为 Test Seam（遵循“测试先行”与避免私有方法耦合）。
+
+
+def tts_build_ledger(
+    score_summary: "V1ScoreSummary",
+    raw_stats: Mapping[str, Any] | None,
+    champion_name: str | None,
+    game_mode: str | None,
+) -> dict[str, Any]:
+    """构建可播报事实账本（ledger）。
+
+    仅收录允许在 TTS 中出现的数字与标签，确保来源可追溯。
+    - 数字：K/D/A、CS、CS/Min、输出/承伤、综合评分、资源转目标率与分解、资源计数、时长
+    - 标签：英雄名、模式（sr/aram/arena）、可引用地点替换
+
+    不收录：控制类（CC）数据与指标。
+    """
+    raw = dict(raw_stats or {})
+    ledger: dict[str, Any] = {}
+
+    # 主体/模式
+    def _champ_aliases(name: str) -> set[str]:
+        name_norm = (name or "").strip()
+        # 精简常见别名（可扩展）：英→中，含口语简称
+        CHAMP_ALIASES: dict[str, tuple[str, ...]] = {
+            "XinZhao": ("赵信",),
+            "Qiyana": ("奇亚娜",),
+            "LeeSin": ("李青", "瞎子"),
+            "Yasuo": ("亚索",),
+            "Yone": ("永恩",),
+            "Irelia": ("刀妹", "艾瑞莉娅"),
+            "Ashe": ("艾希", "寒冰"),
+            "Ezreal": ("伊泽瑞尔", "EZ"),
+            "Vayne": ("薇恩", "VN"),
+            "Caitlyn": ("凯特琳", "女警"),
+        }
+        tokens = {name_norm}
+        for en, zh in CHAMP_ALIASES.items():
+            if name_norm and name_norm.lower() == en.lower():
+                tokens.update(zh)
+        return {t for t in tokens if t}
+
+    subj = (champion_name or raw.get("champion_name") or raw.get("champion") or "").strip()
+    ledger["champion_name"] = subj
+    ledger["allowed_subject_tokens"] = _champ_aliases(subj)
+    mode = (game_mode or raw.get("game_mode") or "").strip().lower()
+    if mode in {"sr", "summoners_rift"}:
+        ledger["mode"] = "sr"
+    elif mode in {"aram"}:
+        ledger["mode"] = "aram"
+    elif mode in {"arena"}:
+        ledger["mode"] = "arena"
+    else:
+        ledger["mode"] = ""
+
+    # 核心数字
+    kills = raw.get("kills")
+    deaths = raw.get("deaths")
+    assists = raw.get("assists")
+    if all(x is not None for x in (kills, deaths, assists)):
+        ledger["kda_tuple"] = (int(kills), int(deaths), int(assists))
+
+    cs_total = raw.get("cs") or raw.get("total_cs")
+    if cs_total is not None:
+        with suppress(Exception):
+            ledger["cs_total"] = int(cs_total)
+    cs_per_min = raw.get("cs_per_min")
+    with suppress(Exception):
+        ledger["cs_per_min"] = float(cs_per_min) if cs_per_min is not None else None
+
+    with suppress(Exception):
+        ledger["overall_score"] = float(score_summary.overall_score)
+
+    with suppress(Exception):
+        ledger["damage_dealt"] = int(float(raw.get("damage_dealt") or 0))
+    with suppress(Exception):
+        ledger["damage_taken"] = int(float(raw.get("damage_taken") or 0))
+
+    # 资源/转目标
+    sr_enrichment = (
+        raw.get("sr_enrichment") if isinstance(raw.get("sr_enrichment"), Mapping) else None
+    )
+    if isinstance(sr_enrichment, Mapping):
+        conv_rate = sr_enrichment.get("conversion_rate")
+        with suppress(Exception):
+            ledger["conversion_rate_percent"] = (
+                int(round(float(conv_rate) * 100)) if conv_rate is not None else None
+            )
+
+        breakdown = sr_enrichment.get("objective_breakdown") or {}
+
+        # 允许提及的目标，仅当计数>0
+        def _to_int(x: Any) -> int:
+            try:
+                return int(x or 0)
+            except Exception:
+                return 0
+
+        ledger["objectives"] = {
+            "towers": _to_int(breakdown.get("towers")),
+            "drakes": _to_int(breakdown.get("drakes")),
+            "heralds": _to_int(breakdown.get("heralds")),
+            "barons": _to_int(breakdown.get("barons")),
+            "inhibitors": _to_int(breakdown.get("inhibitors")),
+            "voidgrubs": _to_int(breakdown.get("voidgrubs")),
+            "atakhans": _to_int(breakdown.get("atakhans")),
+        }
+
+    # 允许出现的数字 token 集合（字符串形式），用于快速比对
+    allowed_numbers: set[str] = set()
+    if "kda_tuple" in ledger:
+        k, d, a = ledger["kda_tuple"]
+        allowed_numbers.update({str(k), str(d), str(a)})
+    for key in ("cs_total", "damage_dealt", "damage_taken"):
+        if ledger.get(key) is not None:
+            allowed_numbers.add(str(ledger[key]))
+    if ledger.get("overall_score") is not None:
+        allowed_numbers.add(str(int(round(ledger["overall_score"]))))
+    if ledger.get("conversion_rate_percent") is not None:
+        allowed_numbers.add(str(int(ledger["conversion_rate_percent"])))
+    with suppress(Exception):
+        cspm = ledger.get("cs_per_min")
+        if isinstance(cspm, float):
+            # 允许 1 位小数与整数近似
+            allowed_numbers.add(f"{cspm:.1f}")
+            allowed_numbers.add(str(int(round(cspm))))
+
+    ledger["allowed_numbers"] = allowed_numbers
+    return ledger
+
+
+def tts_remove_cc_language(text: str) -> str:
+    """移除 CC（控制类）措辞，避免将 CC 数据纳入 TTS 范围。
+
+    会去掉：控制/控/眩晕/击飞/减速/击退/沉默/缴械/定身/禁锢/嘲讽/恐惧 等关键词。
+    保守策略：整词/短语替换为空格，然后再归一空白。
+    """
+    if not text:
+        return ""
+    cc_tokens = (
+        "控制",
+        "眩晕",
+        "击飞",
+        "减速",
+        "击退",
+        "沉默",
+        "缴械",
+        "定身",
+        "禁锢",
+        "嘲讽",
+        "恐惧",
+    )
+    sanitized = str(text)
+    for tok in cc_tokens:
+        sanitized = sanitized.replace(tok, "")
+    # 压缩多余空白
+    sanitized = re.sub(r"\s{2,}", " ", sanitized).strip()
+    return sanitized
+
+
+def tts_guard_text(text: str, ledger: Mapping[str, Any]) -> str | None:
+    """温和模式守护：
+    - 仅允许 ledger 中的数字；不在集合内的数字与紧邻单位一并移除；
+    - 仅允许 ledger 支持的资源词（且计数>0）；数字不匹配时移除该数字；
+    - 移除 CC 相关措辞；
+    返回清洗后的文本；若清洗后文本过短则返回 None 以触发 fallback。
+    """
+    if not text:
+        return None
+    s = str(text)
+
+    # 1) 移除 CC 措辞优先
+    s = tts_remove_cc_language(s)
+
+    allowed_numbers: set[str] = set(ledger.get("allowed_numbers") or set())
+
+    # 2) 数字白名单：移除不在集合内的数字（含相邻 0~2 个中文单位/标点）
+    def _strip_unauth_numbers(m: re.Match[str]) -> str:
+        num = m.group(1)
+        unit = m.group(2) or ""
+        return f"{unit}" if num in allowed_numbers else ""
+
+    # e.g. 999、999.9、88%
+    s = re.sub(r"(\d{1,6}(?:\.\d{1,2})?)([%%%分点次个/每分]*)", _strip_unauth_numbers, s)
+
+    # 额外处理 K/D/A 结构：若与 ledger 不一致则整段去掉
+    kda_allowed = ledger.get("kda_tuple")
+    if kda_allowed:
+        k, d, a = kda_allowed
+        s = re.sub(
+            r"(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})",
+            lambda m: m.group(0)
+            if (int(m.group(1)), int(m.group(2)), int(m.group(3))) == (k, d, a)
+            else "",
+            s,
+        )
+    else:
+        # 无允许 KDA 时直接移除任何 K/D/A 模式
+        s = re.sub(r"\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{1,2}", "", s)
+
+    # 3) 资源词：仅当 ledger 中 count>0 才允许出现；若出现数字与 ledger 不一致，移除该数字
+    obj = dict(ledger.get("objectives") or {})
+    resource_map = {
+        "drakes": ("小龙", "控龙", "龙"),
+        "barons": ("大龙", "男爵"),
+        "heralds": ("先锋",),
+        "towers": ("推塔", "防御塔", "塔"),
+        "inhibitors": ("水晶", "抑制器", "拆晶"),
+        "voidgrubs": ("虚空幼体",),
+        "atakhans": ("阿塔坎",),
+    }
+    for key, aliases in resource_map.items():
+        count = int(obj.get(key) or 0)
+        if count <= 0:
+            # 不允许出现该资源词：整句删除（到句号/换行）
+            for a in aliases:
+                s = re.sub(rf"[^。\n]*{re.escape(a)}[^。\n]*[。\n]", "", s)
+        else:
+            # 允许出现，但若携带不一致数字，移除该数字
+            count_str = str(count)
+            for a in aliases:
+
+                def _replace(m: re.Match[str], expected: str = count_str) -> str:
+                    return m.group(1) if m.group(2) != expected else m.group(0)
+
+                s = re.sub(
+                    rf"({re.escape(a)}[^0-9。\n]*)(\d+)",
+                    _replace,
+                    s,
+                )
+
+    s = re.sub(r"\s{2,}", " ", s).strip()
+
+    # 4) 主体一致性（英雄名）：若出现其它常见英雄名且不在 allowed_subject_tokens，则替换为主体
+    try:
+        allowed_subjects = set(ledger.get("allowed_subject_tokens") or set())
+        main_subject = next(iter(allowed_subjects), (ledger.get("champion_name") or "").strip())
+        if main_subject:
+            other_tokens = {
+                "奇亚娜",
+                "Qiyana",
+                "赵信",
+                "XinZhao",
+                "李青",
+                "LeeSin",
+                "瞎子",
+                "亚索",
+                "Yasuo",
+                "永恩",
+                "Yone",
+                "艾瑞莉娅",
+                "刀妹",
+                "Irelia",
+                "艾希",
+                "寒冰",
+                "Ashe",
+                "EZ",
+                "伊泽瑞尔",
+                "Ezreal",
+                "薇恩",
+                "VN",
+                "Vayne",
+                "凯特琳",
+                "女警",
+                "Caitlyn",
+            }
+            # 允许主体自身别名出现
+            other_tokens = {t for t in other_tokens if t not in allowed_subjects}
+            if other_tokens:
+                pattern = r"(" + r"|".join(re.escape(t) for t in sorted(other_tokens)) + r")"
+                s = re.sub(pattern, lambda m: main_subject, s)
+    except Exception:
+        pass
+    if len(s) < _TTS_MIN_CHARS:
+        return None
+    return s
+
 
 @dataclass(slots=True)
 class TtsSummaryOutcome:
@@ -639,7 +918,8 @@ def _build_tts_fallback(
     )
 
     if worst_label == "生存" or score_summary.survivability_score <= 45:
-        advice_core = "进场要等控制交完，保留位移再收割"
+        # 避免使用“控制”措辞，改为中性技能描述
+        advice_core = "进场要等关键技能交完，保留位移再收尾"
     elif worst_label == "经济":
         advice_core = "补刀与控线别松懈，保持经济节奏"
     elif worst_label == "团队":
@@ -2139,6 +2419,7 @@ async def _generate_tts_summary(
                 return "逆风拉扯，偶尔能博到反攻窗口"
             return "压力山大，需要把败局写成复仇剧本"
 
+        # 按用户偏好：去除“控制影响（CC）”维度，不在 TTS 中引用。
         dimension_pairs = [
             ("战斗效率", score_summary.combat_score),
             ("经济管理", score_summary.economy_score),
@@ -2149,7 +2430,6 @@ async def _generate_tts_summary(
             ("前排坦度", score_summary.tankiness_score),
             ("伤害构成", score_summary.damage_composition_score),
             ("生存能力", score_summary.survivability_score),
-            ("控制影响", score_summary.cc_contribution_score),
         ]
         strength_dim = max(dimension_pairs, key=lambda item: float(item[1] or 0.0))
         weakness_dim = min(dimension_pairs, key=lambda item: float(item[1] or 0.0))
@@ -2430,6 +2710,19 @@ async def _generate_tts_summary(
             processed = _repair_arena_subject(processed, champion_name, game_mode)
             processed = _compress_tts_text(processed.strip(), _TTS_MAX_CHARS)
 
+            # 温和模式守护：仅允许 ledger 中事实，且移除 CC 措辞
+            ledger = tts_build_ledger(score_summary, raw_stats, champion_name, game_mode)
+            guarded = tts_guard_text(processed, ledger)
+            if guarded is None:
+                logger.info(
+                    "tts_summary_invalid_after_guard",
+                    extra={
+                        "preview": processed[:120],
+                    },
+                )
+            else:
+                processed = guarded
+
             if processed:
                 is_valid, validation_hints = _validate_tts_candidate(processed)
                 if validation_hints:
@@ -2483,7 +2776,20 @@ async def _generate_tts_summary(
                     )
                     return None
 
+                # 预览与观测（不包含敏感数据）
                 processed_excerpt = processed[:400]
+                try:
+                    ledger_keys = sorted(list((ledger or {}).keys()))  # type: ignore[arg-type]
+                except Exception:
+                    ledger_keys = []
+                logger.info(
+                    "tts_summary_preview",
+                    extra={
+                        "summary_length": len(processed),
+                        "processed_excerpt": processed_excerpt,
+                        "ledger_keys": ledger_keys,
+                    },
+                )
                 logger.info(
                     "tts_summary_generated",
                     extra={

@@ -489,11 +489,7 @@ def analyze_team_task(
 
             # Optional: enrich with full-token TL;DR (no extra message spam)
             # Skip for Arena - Arena有专门的双人分析，不走Team TLDR
-            import os as _os_ft
-
-            if should_run_team_full_token(
-                metrics.get("game_mode"), _os_ft.getenv("TEAM_FULL_TOKEN_MODE", "")
-            ):
+            if metrics.get("game_mode") != "arena":
                 try:
                     ft = _run_full_token_team_analysis(
                         match_details=match_details,
@@ -584,33 +580,39 @@ def analyze_team_task(
                     extra={"reason": "arena_mode", "game_mode": metrics.get("game_mode")},
                 )
                 # Fallback: Generate basic summary from timeline when Match Details unavailable
-                try:
-                    t_info = timeline.get("info", {}) or {}
-                    frames = t_info.get("frames", []) or []
-                    duration_min = 0.0
-                    if len(frames) >= 2:
-                        first_ts = int(frames[0].get("timestamp", 0) or 0)
-                        last_ts = int(frames[-1].get("timestamp", 0) or 0)
-                        duration_s = (last_ts - first_ts) / 1000.0
-                        if duration_s <= 0:
-                            # Some payloads have identical timestamps; fall back to frame interval * (n-1)
-                            interval_ms = int(
-                                t_info.get("frame_interval") or t_info.get("frameInterval") or 0
-                            )
-                            if interval_ms > 0:
-                                duration_s = (interval_ms / 1000.0) * max(0, len(frames) - 1)
-                        duration_s = max(0.0, duration_s)
-                        duration_min = round(duration_s / 60.0, 1)
+                if team_report.game_mode == "summoners_rift":
+                    try:
+                        t_info = timeline.get("info", {}) or {}
+                        frames = t_info.get("frames", []) or []
+                        duration_min = 0.0
+                        if len(frames) >= 2:
+                            first_ts = int(frames[0].get("timestamp", 0) or 0)
+                            last_ts = int(frames[-1].get("timestamp", 0) or 0)
+                            duration_s = (last_ts - first_ts) / 1000.0
+                            if duration_s <= 0:
+                                # Some payloads have identical timestamps; fall back to frame interval * (n-1)
+                                interval_ms = int(
+                                    t_info.get("frame_interval") or t_info.get("frameInterval") or 0
+                                )
+                                if interval_ms > 0:
+                                    duration_s = (interval_ms / 1000.0) * max(0, len(frames) - 1)
+                            duration_s = max(0.0, duration_s)
+                            duration_min = round(duration_s / 60.0, 1)
 
-                    win_text = "胜利" if team_report.team_result == "victory" else "失败"
-                    fallback_summary = f"本局{win_text}，比赛时长 {duration_min} 分钟。数据加载受限，仅显示基础评分。"
-                    team_report.summary_text = fallback_summary
-                    logger.info("fallback_summary_generated", extra={"duration_min": duration_min})
-                except Exception:
-                    pass
+                        win_text = "胜利" if team_report.team_result == "victory" else "失败"
+                        fallback_summary = f"本局{win_text}，比赛时长 {duration_min} 分钟。数据加载受限，仅显示基础评分。"
+                        team_report.summary_text = fallback_summary
+                        logger.info(
+                            "fallback_summary_generated", extra={"duration_min": duration_min}
+                        )
+                    except Exception:
+                        pass
 
             # If feature flag is OFF or TL;DR empty, ensure a minimal summary exists
-            if not getattr(team_report, "summary_text", None):
+            if (
+                not getattr(team_report, "summary_text", None)
+                and team_report.game_mode == "summoners_rift"
+            ):
                 try:
                     t_info = timeline.get("info", {}) or {}
                     frames = t_info.get("frames", []) or []
@@ -644,14 +646,15 @@ def analyze_team_task(
                 from src.core.services.teamfight_reconstructor import extract_teamfight_summaries
 
                 # Use raw Riot timeline/detail
-                tf_lines = extract_teamfight_summaries(timeline, match_details)
-                if tf_lines:
-                    tf_line = f"• 团战: {tf_lines[0]}"
-                    if getattr(team_report, "summary_text", None):
-                        merged = f"{team_report.summary_text}\n{tf_line}"
-                        team_report.summary_text = merged[:600]
-                    else:
-                        team_report.summary_text = tf_line
+                if team_report.game_mode == "summoners_rift":
+                    tf_lines = extract_teamfight_summaries(timeline, match_details)
+                    if tf_lines:
+                        tf_line = f"• 团战: {tf_lines[0]}"
+                        if getattr(team_report, "summary_text", None):
+                            merged = f"{team_report.summary_text}\n{tf_line}"
+                            team_report.summary_text = merged[:600]
+                        else:
+                            team_report.summary_text = tf_line
             except Exception:
                 pass
 
@@ -1386,12 +1389,24 @@ def _run_full_token_team_analysis(
             asyncio.run(llm.analyze_match(full_payload, TEAM_FULL_TOKEN_SYSTEM_PROMPT)) or ""
         )
         narrative = narrative.strip()
-        if not narrative or tldr_contains_hallucination(narrative):
+        if not narrative:
             logger.error(
                 "team_narrative_invalid",
                 extra={
                     "match_id": full_payload.get("match_id"),
                     "snippet": narrative[:160],
+                    "reason": "empty_narrative",
+                },
+            )
+            raise RuntimeError("LLM returned empty team narrative")
+
+        if tldr_contains_hallucination(narrative):
+            logger.error(
+                "team_narrative_invalid",
+                extra={
+                    "match_id": full_payload.get("match_id"),
+                    "snippet": narrative[:160],
+                    "reason": "hallucination_detected",
                 },
             )
             raise RuntimeError("LLM returned invalid team narrative")
@@ -2081,6 +2096,7 @@ def _build_final_analysis_report(
                         ps = idx.get(pid)
                         if not ps:
                             continue
+                        is_aram_mode = raw_stats.get("game_mode_label", "").lower() == "aram"
                         team_players_objs.append(
                             SimpleNamespace(
                                 summoner_name=p.get("riotIdGameName")
@@ -2088,10 +2104,14 @@ def _build_final_analysis_report(
                                 or p.get("gameName"),
                                 combat_score=ps.combat_efficiency,
                                 economy_score=ps.economic_management,
-                                vision_score=ps.vision_control,
-                                objective_score=ps.objective_control,
+                                vision_score=0.0 if is_aram_mode else ps.vision_control,
+                                objective_score=0.0 if is_aram_mode else ps.objective_control,
                                 teamplay_score=ps.team_contribution,
                                 survivability_score=getattr(ps, "survivability_score", 0.0),
+                                kills=int(p.get("kills", 0) or 0),
+                                deaths=int(p.get("deaths", 0) or 0),
+                                assists=int(p.get("assists", 0) or 0),
+                                damage_dealt=int(p.get("totalDamageDealtToChampions", 0) or 0),
                             )
                         )
                     built_from = "timeline"
@@ -2112,6 +2132,7 @@ def _build_final_analysis_report(
                     ps = idx.get(pid)
                     if not ps:
                         continue
+                    is_aram_mode = raw_stats.get("game_mode_label", "").lower() == "aram"
                     team_players_objs.append(
                         SimpleNamespace(
                             summoner_name=p.get("riotIdGameName")
@@ -2119,10 +2140,18 @@ def _build_final_analysis_report(
                             or p.get("gameName"),
                             combat_score=float(ps.get("combat_efficiency", 0.0)),
                             economy_score=float(ps.get("economic_management", 0.0)),
-                            vision_score=float(ps.get("vision_control", 0.0)),
-                            objective_score=float(ps.get("objective_control", 0.0)),
+                            vision_score=0.0
+                            if is_aram_mode
+                            else float(ps.get("vision_control", 0.0)),
+                            objective_score=0.0
+                            if is_aram_mode
+                            else float(ps.get("objective_control", 0.0)),
                             teamplay_score=float(ps.get("team_contribution", 0.0)),
                             survivability_score=float(ps.get("survivability_score", 0.0)),
+                            kills=int(p.get("kills", 0) or 0),
+                            deaths=int(p.get("deaths", 0) or 0),
+                            assists=int(p.get("assists", 0) or 0),
+                            damage_dealt=int(p.get("totalDamageDealtToChampions", 0) or 0),
                         )
                     )
                 built_from = built_from or "score_data"
@@ -2353,6 +2382,24 @@ async def _build_team_overview_report(
     target_pid = int(target_p.get("participantId", 0) or 0) if target_p else 0
     team_tag = 100 if target_pid and target_pid <= 5 else 200
 
+    # Detect/correct game mode (prefer early-resolved label when provided)
+    gm_label_str = resolved_game_mode or "unknown"
+    if gm_label_str not in {"summoners_rift", "aram", "arena", "unknown"}:
+        try:
+            from src.contracts.v23_multi_mode_analysis import detect_game_mode
+
+            qid = int(info.get("queueId", 0) or 0)
+            gm = detect_game_mode(qid)
+            gm_label_str = _map_game_mode_to_contract(
+                gm.mode if isinstance(gm.mode, str) else "Fallback"
+            )
+            parts_len = len(info.get("participants", []) or [])
+            if gm_label_str == "arena" and parts_len == 10:
+                gm_label_str = "summoners_rift"
+        except Exception:
+            gm_label_str = "unknown"
+    gm_label: Literal["summoners_rift", "aram", "arena", "unknown"] = gm_label_str  # type: ignore[assignment]
+
     # Scores for 10 players (SR path). For Arena this may be partial (1..10)
     ao = generate_llm_input(MatchTimeline(**timeline_data), match_details=match_details)
     idx = {int(ps.participant_id): ps for ps in ao.player_scores}
@@ -2412,6 +2459,11 @@ async def _build_team_overview_report(
         tag = p.get("riotIdTagline") or p.get("tagLine")
         name = f"{name_core}#{tag}" if tag else name_core
         champion_name = p.get("championName") or "Unknown"
+        is_aram_mode = gm_label == "aram"
+        kills = int(p.get("kills", 0) or 0)
+        deaths = int(p.get("deaths", 0) or 0)
+        assists = int(p.get("assists", 0) or 0)
+        damage = int(p.get("totalDamageDealtToChampions", 0) or 0)
         _player_payloads.append(
             {
                 "puuid": p.get("puuid", ""),
@@ -2420,10 +2472,14 @@ async def _build_team_overview_report(
                 "role": _role_of(p),
                 "combat_score": float(ps.combat_efficiency),
                 "economy_score": float(ps.economic_management),
-                "vision_score": float(ps.vision_control),
-                "objective_score": float(ps.objective_control),
+                "vision_score": 0.0 if is_aram_mode else float(ps.vision_control),
+                "objective_score": 0.0 if is_aram_mode else float(ps.objective_control),
                 "teamplay_score": float(ps.team_contribution),
                 "overall_score": float(ps.total_score),
+                "kills": kills,
+                "deaths": deaths,
+                "assists": assists,
+                "damage_dealt": damage,
                 "survivability_score": (
                     float(getattr(ps, "survivability_score", 0.0))
                     if getattr(ps, "survivability_score", None) is not None
@@ -2443,6 +2499,61 @@ async def _build_team_overview_report(
         payload["team_rank"] = rank
         team_players.append(TeamPlayerEntry(**payload))
 
+    # Opponent team (5 players)
+    enemy_tag = 200 if team_tag == 100 else 100
+    _enemy_payloads: list[dict[str, Any]] = []
+    for p in participants:
+        pid = int(p.get("participantId", 0) or 0)
+        side = 100 if pid and pid <= 5 else 200
+        if side != enemy_tag:
+            continue
+        ps = idx.get(pid)
+        if not ps:
+            continue
+        name_core = p.get("riotIdGameName") or p.get("summonerName") or p.get("gameName") or "-"
+        tag = p.get("riotIdTagline") or p.get("tagLine")
+        name = f"{name_core}#{tag}" if tag else name_core
+        champion_name = p.get("championName") or "Unknown"
+        is_aram_mode = gm_label == "aram"
+        kills = int(p.get("kills", 0) or 0)
+        deaths = int(p.get("deaths", 0) or 0)
+        assists = int(p.get("assists", 0) or 0)
+        damage = int(p.get("totalDamageDealtToChampions", 0) or 0)
+        _enemy_payloads.append(
+            {
+                "puuid": p.get("puuid", ""),
+                "summoner_name": name,
+                "champion_name": champion_name,
+                "role": _role_of(p),
+                "combat_score": float(ps.combat_efficiency),
+                "economy_score": float(ps.economic_management),
+                "vision_score": 0.0 if is_aram_mode else float(ps.vision_control),
+                "objective_score": 0.0 if is_aram_mode else float(ps.objective_control),
+                "teamplay_score": float(ps.team_contribution),
+                "overall_score": float(ps.total_score),
+                "kills": kills,
+                "deaths": deaths,
+                "assists": assists,
+                "damage_dealt": damage,
+                "survivability_score": (
+                    float(getattr(ps, "survivability_score", 0.0))
+                    if getattr(ps, "survivability_score", None) is not None
+                    else None
+                ),
+                "champion_icon_url": _champion_icon_url(champion_name, game_version),
+            }
+        )
+        if len(_enemy_payloads) == 5:
+            break
+
+    opponent_players: list[TeamPlayerEntry] = []
+    for rank, payload in enumerate(
+        sorted(_enemy_payloads, key=lambda item: item["overall_score"], reverse=True)[:5],
+        start=1,
+    ):
+        payload["team_rank"] = rank
+        opponent_players.append(TeamPlayerEntry(**payload))
+
     # Aggregates over 5
     def _avg(vals: list[float]) -> float:
         return round(sum(vals) / max(1, len(vals)), 1)
@@ -2456,26 +2567,18 @@ async def _build_team_overview_report(
         overall_avg=_avg([p.overall_score for p in team_players]),
     )
 
+    opponent_aggregates = None
+    if opponent_players:
+        opponent_aggregates = TeamAggregates(
+            combat_avg=_avg([p.combat_score for p in opponent_players]),
+            economy_avg=_avg([p.economy_score for p in opponent_players]),
+            vision_avg=_avg([p.vision_score for p in opponent_players]),
+            objective_avg=_avg([p.objective_score for p in opponent_players]),
+            teamplay_avg=_avg([p.teamplay_score for p in opponent_players]),
+            overall_avg=_avg([p.overall_score for p in opponent_players]),
+        )
+
     win = bool(target_p.get("win", False)) if target_p else False
-    # Detect/correct game mode (prefer early-resolved label when provided)
-    gm_label_str = resolved_game_mode or "unknown"
-    if gm_label_str not in {"summoners_rift", "aram", "arena", "unknown"}:
-        try:
-            from src.contracts.v23_multi_mode_analysis import detect_game_mode
-
-            qid = int(info.get("queueId", 0) or 0)
-            gm = detect_game_mode(qid)
-            gm_label_str = _map_game_mode_to_contract(
-                gm.mode if isinstance(gm.mode, str) else "Fallback"
-            )
-            parts_len = len(info.get("participants", []) or [])
-            if gm_label_str == "arena" and parts_len == 10:
-                gm_label_str = "summoners_rift"
-        except Exception:
-            gm_label_str = "unknown"
-    # Type narrowing: at this point gm_label_str is guaranteed to be one of the allowed values
-    gm_label: Literal["summoners_rift", "aram", "arena", "unknown"] = gm_label_str  # type: ignore[assignment]
-
     # Arena duo enrichment (for specialized view)
     arena_duo = None
     if gm_label == "arena" and target_p:
@@ -2901,7 +3004,9 @@ async def _build_team_overview_report(
         team_region=region,
         game_mode=gm_label,
         players=team_players,
+        opponent_players=opponent_players or None,
         aggregates=aggregates,
+        opponent_aggregates=opponent_aggregates,
         summary_text=summary_text,
         builds_summary_text=builds_summary_text,
         builds_metadata=builds_metadata,

@@ -155,6 +155,12 @@ def _derive_highlights(
         ("vision_control", "视野控制", target.vision_score, aggregates.vision_avg),
         ("team_contribution", "团队协同", target.teamplay_score, aggregates.teamplay_avg),
     ]
+    if report.game_mode == "aram":
+        base_dimensions = [
+            entry
+            for entry in base_dimensions
+            if entry[0] not in {"objective_control", "vision_control"}
+        ]
     for key, label, score, avg in base_dimensions:
         dims.append(
             TeamAnalysisReport.DimensionHighlight(
@@ -200,7 +206,13 @@ def _format_highlights(
     return "\n".join(lines) if lines else empty_text
 
 
-def _format_enhancements(metrics: TeamAnalysisReport.EnhancementMetrics | None) -> str:
+def _format_enhancements(
+    metrics: TeamAnalysisReport.EnhancementMetrics | None,
+    *,
+    mode: str,
+) -> str:
+    if mode == "aram":
+        return "ARAM 模式暂无时间线增强指标"
     if metrics is None:
         return "暂无时间线增强数据"
     parts: list[str] = []
@@ -286,25 +298,51 @@ def _format_builds_section(report: TeamAnalysisReport) -> str:
 
 
 def _format_team_snapshot(
-    players: list[TeamAnalysisReport.TeamPlayerEntry],
+    friendly: list[TeamAnalysisReport.TeamPlayerEntry],
+    opponents: list[TeamAnalysisReport.TeamPlayerEntry] | None,
     *,
     ascii_safe: bool,
 ) -> str:
-    sorted_players = sorted(
-        players,
+    friends_sorted = sorted(
+        friendly,
         key=lambda p: (p.team_rank if p.team_rank is not None else 999, -p.overall_score),
     )
-    lines = ["位置  选手                综合  排名"]
-    for player in sorted_players:
-        champion_emoji = ""
-        if not ascii_safe:
-            champion_emoji = resolve_emoji(f"champion:{player.champion_name}", "")
-        name = player.summoner_name
-        display = f"{champion_emoji} {name}" if champion_emoji else name
+    opponents_sorted = sorted(
+        opponents or [],
+        key=lambda p: (p.team_rank if p.team_rank is not None else 999, -p.overall_score),
+    )
+
+    def _entry_line(player: TeamAnalysisReport.TeamPlayerEntry | None) -> str:
+        if player is None:
+            return "-"
         rank = player.team_rank if player.team_rank is not None else "-"
-        lines.append(f"{player.role:<4} {display:<18} {player.overall_score:>5.1f}  #{rank}")
+        name = player.summoner_name
+        if not ascii_safe:
+            champ_emoji = resolve_emoji(f"champion:{player.champion_name}", "")
+            if champ_emoji:
+                name = f"{champ_emoji} {name}"
+        name = clamp_text(name, 14)
+        dmg_k = player.damage_dealt / 1000.0
+        dmg_display = f"{dmg_k:.1f}k" if dmg_k >= 1 else str(player.damage_dealt)
+        kda = f"{player.kills}/{player.deaths}/{player.assists}"
+        vs_display = f"{player.vision_score:.1f}" if player.vision_score else "0"
+        return (
+            f"#{rank:<2} {name:<14} G{player.overall_score:>5.1f} "
+            f"C{player.combat_score:>5.0f} T{player.teamplay_score:>5.0f} "
+            f"KDA {kda:<9} Dmg {dmg_display:<6} VS {vs_display:>5}"
+        )
+
+    max_rows = max(len(friends_sorted), len(opponents_sorted)) or 0
+    header_left = "我方阵容"
+    header_right = "敌方阵容"
+    lines = [f"{header_left:<45} | {header_right}"]
+    for idx in range(max_rows):
+        left = _entry_line(friends_sorted[idx] if idx < len(friends_sorted) else None)
+        right = _entry_line(opponents_sorted[idx] if idx < len(opponents_sorted) else None)
+        lines.append(f"{left:<45} | {right}")
+
     snapshot = "\n".join(lines)
-    return f"```\n{clamp_code_block(snapshot, limit=1000)}\n```"
+    return f"```\n{clamp_code_block(snapshot, limit=1800)}\n```"
 
 
 def _build_fallback_narrative(
@@ -394,12 +432,16 @@ def render_team_overview_embed(report: TeamAnalysisReport) -> discord.Embed:
     )
     embed.add_field(
         name="🕒 时间线增强",
-        value=_format_enhancements(report.enhancements),
+        value=_format_enhancements(report.enhancements, mode=report.game_mode),
         inline=False,
     )
     embed.add_field(
         name="🧠 团队阵容",
-        value=_format_team_snapshot(report.players, ascii_safe=ascii_safe),
+        value=_format_team_snapshot(
+            report.players,
+            report.opponent_players or [],
+            ascii_safe=ascii_safe,
+        ),
         inline=False,
     )
     embed.add_field(

@@ -80,12 +80,10 @@ Object `V2PlayerAnalysisResult` (per player):
 
 ### Scoring Context (Same as V1)
 
-You will receive target player's score data with five dimensions (0-100 scale):
-- ⚔️ **Combat Efficiency** (30% weight)
-- 💰 **Economic Management** (25% weight)
-- 🎯 **Objective Control** (25% weight)
-- 👁️ **Vision Control** (10% weight)
-- 🤝 **Team Contribution** (10% weight)
+You will receive target player's score data with core dimensions (0-100 scale):
+- ⚔️ **Combat Efficiency** (40% weight)
+- 💰 **Economic Management** (35% weight)
+- 🤝 **Team Contribution** (25% weight)
 
 **Additionally, you will receive `team_summary` with**:
 - Average, max, min scores for each dimension across all 5 teammates
@@ -93,7 +91,7 @@ You will receive target player's score data with five dimensions (0-100 scale):
 
 ### Example JSON Output (V2 Team-Relative)
 
-{"match_id":"NA1_4567890123","match_result":"victory","target_player_puuid":"<puuid>","target_player_name":"TestADC","team_analysis":[{"puuid":"<puuid>","summoner_name":"TestADC","champion_name":"Jinx","champion_icon_url":"https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/Jinx.png","overall_score":77.8,"team_rank":2,"top_strength_dimension":"Economy","top_strength_score":92.1,"top_strength_team_rank":1,"top_weakness_dimension":"Vision","top_weakness_score":62.4,"top_weakness_team_rank":4,"narrative_summary":"经济评分92.1高于队伍均值80.7约14%，排名第1；战斗评分85.3高于均值81.6约4.5%，排名第2；视野62.4低于均值75.3约17%，排名第4。"}],"team_summary_insight":"团队经济领先但视野薄弱","ab_cohort":"B","variant_id":"v2_team_summary_20251006","processing_duration_ms":2300.5,"algorithm_version":"v2"}
+{"match_id":"NA1_4567890123","match_result":"victory","target_player_puuid":"<puuid>","target_player_name":"TestADC","team_analysis":[{"puuid":"<puuid>","summoner_name":"TestADC","champion_name":"Jinx","champion_icon_url":"https://ddragon.leagueoflegends.com/cdn/13.24.1/img/champion/Jinx.png","overall_score":77.8,"team_rank":2,"top_strength_dimension":"Economy","top_strength_score":92.1,"top_strength_team_rank":1,"top_weakness_dimension":"Team Contribution","top_weakness_score":68.4,"top_weakness_team_rank":4,"narrative_summary":"经济评分92.1高于队伍均值80.7约14%，排名第1；战斗评分85.3高于均值81.6约4.5%，排名第2；团队协同68.4略低于均值72.1，排名第4。"}],"team_summary_insight":"团队整体战斗与经济表现优秀","ab_cohort":"B","variant_id":"v2_team_summary_20251006","processing_duration_ms":2300.5,"algorithm_version":"v2"}
 
 ## Important Reminders for V2 Analysis
 

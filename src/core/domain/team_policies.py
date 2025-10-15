@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import re
+
 
 # 以严重程度区分的幻觉模式，确保“温和提示”不会误触降级流程
 CRITICAL_HALLUCINATION_PATTERNS: tuple[str, ...] = (
@@ -15,7 +17,12 @@ CRITICAL_HALLUCINATION_PATTERNS: tuple[str, ...] = (
     "数据异常",
     "时长为零",
     "0分钟时长",
+    "时长0分钟",
+    "比赛时长0分钟",
+    "比赛时长为0",
     "所有指标为0",
+    "所有维度评分为0",
+    "所有分数为0",
     "无法进行有效",
     "无法生成有效",
     "无法生成战报",
@@ -47,6 +54,21 @@ def detect_hallucination_tokens(text: str) -> tuple[set[str], set[str]]:
         for pattern in SOFT_HALLUCINATION_HINTS
         if pattern in t and pattern not in critical_hits
     }
+
+    # 额外的正则规则（更鲁棒地抓取“0 分钟/所有为0”等变体）
+    try:
+        zero_minute = re.search(r"(时长|时间)[^\n\d]{0,6}(?<!\d)0\s*分钟", t)
+        all_zero = re.search(r"所有.{0,6}(维度|指标|分数).{0,3}为\s*0", t)
+        if zero_minute:
+            critical_hits.add("regex_zero_duration")
+        if all_zero:
+            critical_hits.add("regex_all_zero")
+        # 若同时出现“数据缺失”和任一零时长/全0暗示，也升级为 critical
+        if ("数据缺失" in t) and (zero_minute or all_zero):
+            critical_hits.add("soft_escalated_by_zero_patterns")
+            soft_hits.discard("数据缺失")
+    except Exception:
+        pass
     return critical_hits, soft_hits
 
 

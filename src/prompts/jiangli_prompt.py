@@ -37,7 +37,7 @@ Your analysis MUST follow this structure:
 
 1. **Opening Hook** (1-2 sentences)
    - Capture the match's defining moment or overall theme
-   - Example: "This match was a masterclass in objective control..."
+   - Example: "This match was a showcase of your combat prowess..."
 
 2. **Key Performance Highlights** (2-3 bullet points)
    - Focus on the player's top-scoring dimensions
@@ -47,7 +47,7 @@ Your analysis MUST follow this structure:
 3. **Improvement Opportunities** (1-2 bullet points)
    - Identify the lowest-scoring dimension(s)
    - Provide actionable suggestions
-   - Example: "👁️ **Vision Awareness**: At 45.3/100, your vision score suggests..."
+   - Example: "🤝 **Team Coordination**: At 68.4/100, consider more coordinated plays..."
 
 4. **Closing Insight** (1-2 sentences)
    - Summarize the match's learning point
@@ -62,12 +62,10 @@ Your analysis MUST follow this structure:
 
 ### Scoring Context
 
-You will receive data with these five dimensions (0-100 scale each):
-- ⚔️ **Combat Efficiency** (30% weight): KDA, damage, kill participation
-- 💰 **Economic Management** (25% weight): CS/min, gold generation
-- 🎯 **Objective Control** (25% weight): Dragons, Baron, towers
-- 👁️ **Vision Control** (10% weight): Ward placement/clearing
-- 🤝 **Team Contribution** (10% weight): Assists, teamfight presence
+You will receive data with these core dimensions (0-100 scale each):
+- ⚔️ **Combat Efficiency** (40% weight): KDA, damage, kill participation
+- 💰 **Economic Management** (35% weight): CS/min, gold generation
+- 🤝 **Team Contribution** (25% weight): Assists, teamfight presence, coordination
 
 **Total Score Tiers**:
 - 95-100: S+ (Legendary)
@@ -87,15 +85,15 @@ This game showcased your aggressive playstyle paying dividends—your combat eff
 ### What You Did Right
 - ⚔️ **Combat Mastery (92.5/100)**: Your KDA of 12.0 and 68% kill participation demonstrate exceptional teamfight impact
 - 💰 **Economic Control (88.3/100)**: Maintaining 9.2 CS/min while applying constant pressure shows strong macro fundamentals
-- 🎯 **Objective Awareness (84.7/100)**: Securing 3 dragons and participating in the Baron dance kept your team ahead
+- 🤝 **Team Coordination (85.7/100)**: Your high assist ratio and timely roams show excellent team synergy
 
 ### Growth Opportunities
-- 👁️ **Vision Game (52.1/100)**: Only 18 wards placed across a 32-minute game—more proactive vision control would reduce enemy gank threats
-- 🤝 **Team Synergy (68.4/100)**: While your assist ratio was solid, look for more coordinated engages with your support
+- 🤝 **Team Synergy (68.4/100)**: While your assist ratio was solid, look for more coordinated engages with your support during objective fights
+- ⚔️ **Positioning in Fights**: Consider staying with your team more during critical mid-game moments
 
 ### The Takeaway
 
-Your aggressive, damage-focused style is a strength—you consistently create advantages through superior mechanical skill. To reach the next level, integrate vision control into your roaming patterns. Even simple adjustments like placing a control ward before rotating bot can multiply your impact.
+Your aggressive, damage-focused style is a strength—you consistently create advantages through superior mechanical skill. To reach the next level, focus on timing your roams with your team's power spikes. Even simple improvements like grouping for dragon spawns can multiply your impact.
 
 **Overall Grade**: S (89.2/100) - Outstanding performance with clear paths for refinement.
 ```
