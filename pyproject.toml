@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.12"
+python = ">=3.11,<3.13"
 # Core Dependencies
 pydantic = "^2.5.0"
 pydantic-settings = "^2.1.0"
