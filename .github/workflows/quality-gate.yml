@@ -37,7 +37,7 @@ jobs:
 
       - name: Ruff Lint
         run: |
-          poetry run ruff check --output-format=concise
+          poetry run ruff check --output-format=github
 
       - name: MyPy Strict (src only)
         run: |
