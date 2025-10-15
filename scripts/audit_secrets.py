@@ -16,7 +16,7 @@ PATTERNS = {
     "riot_api_key": re.compile(r"RGAPI-[0-9A-Fa-f\-]{20,}"),
     "discord_token": re.compile(r"[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27}"),
     "aws_key": re.compile(r"AKIA[0-9A-Z]{16}"),
-    "generic_key": re.compile(r"(?i)(api[_-]?key|secret|token)\s*[:=]\s*['\"]).{12,}"),
+    "generic_key": re.compile(r"(?i)(api[_-]?key|secret|token)\s*[:=]\s*['\"].{12,}"),
 }
 
 
