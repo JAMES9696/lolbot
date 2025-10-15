@@ -1335,7 +1335,7 @@ class DatabaseAdapter(DatabasePort):
         try:
             async with self._pool.acquire() as conn:
                 # Update metadata field by merging new preferences with existing
-                await conn.execute(
+                result = await conn.execute(
                     """
                     UPDATE core.user_profiles
                     SET metadata = metadata || $2::jsonb,
@@ -1346,6 +1346,17 @@ class DatabaseAdapter(DatabasePort):
                     json.dumps(preferences),
                     datetime.now(UTC),
                 )
+
+                # Check if UPDATE affected any rows
+                rows_affected = int(result.split()[-1]) if result else 0
+
+                if rows_affected == 0:
+                    logger.warning(
+                        f"No user_profiles row found for Discord ID {discord_id}. "
+                        f"Preferences not saved: {preferences}. "
+                        f"User must bind an account first to create profile."
+                    )
+                    return False
 
                 logger.info(f"Saved preferences for Discord ID {discord_id}: {preferences}")
                 return True

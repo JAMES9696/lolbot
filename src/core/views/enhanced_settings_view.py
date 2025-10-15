@@ -397,7 +397,19 @@ class EnhancedSettingsView(discord.ui.View):
                 await interaction.followup.send(embed=success_embed, ephemeral=True)
 
             else:
-                await interaction.followup.send("❌ 保存设置失败，请重试。", ephemeral=True)
+                error_embed = discord.Embed(
+                    title="❌ 保存设置失败",
+                    description=(
+                        "无法保存您的设置。可能的原因：\n\n"
+                        "• 您还没有绑定 Riot 账号\n"
+                        "• 数据库连接问题\n\n"
+                        "**解决方法：**\n"
+                        "1. 先使用 `/bind` 命令绑定您的游戏账号\n"
+                        "2. 然后再次尝试修改设置"
+                    ),
+                    color=0xED4245,
+                )
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Failed to save settings for user {self.user_id}: {e}", exc_info=True)
