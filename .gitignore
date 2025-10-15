@@ -78,4 +78,13 @@ dmypy.json
 
 # Claude Code Configuration (contains API keys)
 .claude/
+
+# Gemini Configuration (contains API keys)
+.gemini/settings.json
+.gemini/*.json
+
+# Documentation with sensitive data
+docs/FINAL_TEST_SUMMARY.md
+docs/*_TEST_*.md
+
 static/ddragon_cache/metadata/*.json
