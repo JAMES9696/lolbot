@@ -1015,3 +1015,376 @@ class DatabaseAdapter(DatabasePort):
                 return bool(result == 1)
         except Exception:
             return False
+
+    # ========================================================================
+    # Multi-Account Support Methods (方案C Implementation)
+    # ========================================================================
+
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=True,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_accounts", "op": "get_primary"},
+    )
+    async def get_primary_account(self, discord_id: str) -> dict[str, Any] | None:
+        """Get primary (default) account for a Discord user."""
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return None
+
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT riot_puuid, summoner_name, region, nickname, created_at, last_used_at
+                    FROM core.user_accounts
+                    WHERE discord_id = $1 AND is_primary = true
+                    LIMIT 1
+                    """,
+                    int(discord_id),
+                )
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching primary account for {discord_id}: {e}")
+            return None
+
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=True,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_accounts", "op": "get_by_index"},
+    )
+    async def get_account_by_index(self, discord_id: str, index: int) -> dict[str, Any] | None:
+        """Get user's Nth account by creation order (0-based index)."""
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return None
+
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT riot_puuid, summoner_name, region, is_primary, nickname, created_at
+                    FROM core.user_accounts
+                    WHERE discord_id = $1
+                    ORDER BY created_at ASC
+                    LIMIT 1 OFFSET $2
+                    """,
+                    int(discord_id),
+                    index,
+                )
+
+                if row:
+                    return dict(row)
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching account #{index} for {discord_id}: {e}")
+            return None
+
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=True,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_accounts", "op": "list"},
+    )
+    async def list_user_accounts(self, discord_id: str) -> list[dict[str, Any]]:
+        """List all accounts for a Discord user, ordered by creation time."""
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return []
+
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT riot_puuid, summoner_name, region, is_primary, nickname,
+                           created_at, last_used_at
+                    FROM core.user_accounts
+                    WHERE discord_id = $1
+                    ORDER BY created_at ASC
+                    """,
+                    int(discord_id),
+                )
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error listing accounts for {discord_id}: {e}")
+            return []
+
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=True,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_accounts", "op": "save"},
+    )
+    async def save_account(
+        self,
+        discord_id: str,
+        puuid: str,
+        summoner_name: str,
+        region: str,
+        is_primary: bool = False,
+        nickname: str | None = None,
+    ) -> bool:
+        """Save/update a user account binding with automatic primary account management.
+
+        Note: Primary account mutual exclusion is enforced by database trigger
+        (see migration 001_add_multiple_accounts_support.sql)
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                # First, get user_profile_id
+                profile_id = await conn.fetchval(
+                    "SELECT id FROM core.user_profiles WHERE discord_id = $1",
+                    int(discord_id),
+                )
+
+                if not profile_id:
+                    # Create user profile if doesn't exist
+                    profile_id = await conn.fetchval(
+                        """
+                        INSERT INTO core.user_profiles (discord_id, discord_username)
+                        VALUES ($1, $2)
+                        ON CONFLICT (discord_id) DO UPDATE
+                        SET discord_username = EXCLUDED.discord_username
+                        RETURNING id
+                        """,
+                        int(discord_id),
+                        f"user_{discord_id}",  # Placeholder username
+                    )
+
+                # Insert or update account
+                # ON CONFLICT handles both new bindings and updates to existing ones
+                await conn.execute(
+                    """
+                    INSERT INTO core.user_accounts (
+                        user_profile_id, discord_id, riot_puuid, summoner_name,
+                        region, is_primary, nickname, created_at, updated_at, last_used_at
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ON CONFLICT (discord_id, riot_puuid) DO UPDATE
+                    SET summoner_name = EXCLUDED.summoner_name,
+                        region = EXCLUDED.region,
+                        is_primary = EXCLUDED.is_primary,
+                        nickname = EXCLUDED.nickname,
+                        updated_at = EXCLUDED.updated_at,
+                        last_used_at = EXCLUDED.last_used_at
+                    """,
+                    profile_id,
+                    int(discord_id),
+                    puuid,
+                    summoner_name,
+                    region.lower(),  # Normalize to lowercase
+                    is_primary,
+                    nickname,
+                    datetime.now(UTC),
+                    datetime.now(UTC),
+                    datetime.now(UTC),
+                )
+
+                logger.info(
+                    f"Saved account binding for Discord ID {discord_id} -> {puuid} "
+                    f"(primary={is_primary}, nickname={nickname})"
+                )
+                return True
+
+        except asyncpg.UniqueViolationError:
+            logger.warning(f"PUUID {puuid} already bound to another Discord account")
+            return False
+        except Exception as e:
+            logger.error(f"Error saving account for {discord_id}: {e}")
+            return False
+
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=True,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_accounts", "op": "set_primary"},
+    )
+    async def set_primary_account(self, discord_id: str, puuid: str) -> bool:
+        """Switch primary account for a Discord user.
+
+        Database trigger automatically handles unsetting other primaries.
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    UPDATE core.user_accounts
+                    SET is_primary = true, updated_at = $3
+                    WHERE discord_id = $1 AND riot_puuid = $2
+                    """,
+                    int(discord_id),
+                    puuid,
+                    datetime.now(UTC),
+                )
+
+                # Check if any row was updated
+                if result == "UPDATE 0":
+                    logger.warning(f"Account {puuid} not found for Discord ID {discord_id}")
+                    return False
+
+                logger.info(f"Set {puuid} as primary account for Discord ID {discord_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error setting primary account for {discord_id}: {e}")
+            return False
+
+    @llm_debug_wrapper(
+        capture_result=True,
+        capture_args=True,
+        log_level="INFO",
+        add_metadata={"layer": "db", "table": "user_accounts", "op": "remove"},
+    )
+    async def remove_account(self, discord_id: str, puuid: str) -> bool:
+        """Remove an account binding.
+
+        If removing the primary account, automatically promotes the next oldest account.
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    # Check if this is the primary account
+                    was_primary = await conn.fetchval(
+                        """
+                        SELECT is_primary FROM core.user_accounts
+                        WHERE discord_id = $1 AND riot_puuid = $2
+                        """,
+                        int(discord_id),
+                        puuid,
+                    )
+
+                    if was_primary is None:
+                        logger.warning(f"Account {puuid} not found for Discord ID {discord_id}")
+                        return False
+
+                    # Delete the account
+                    await conn.execute(
+                        """
+                        DELETE FROM core.user_accounts
+                        WHERE discord_id = $1 AND riot_puuid = $2
+                        """,
+                        int(discord_id),
+                        puuid,
+                    )
+
+                    # If it was primary, promote the next oldest account
+                    if was_primary:
+                        await conn.execute(
+                            """
+                            UPDATE core.user_accounts
+                            SET is_primary = true
+                            WHERE discord_id = $1
+                              AND id = (
+                                  SELECT id FROM core.user_accounts
+                                  WHERE discord_id = $1
+                                  ORDER BY created_at ASC
+                                  LIMIT 1
+                              )
+                            """,
+                            int(discord_id),
+                        )
+                        logger.info(
+                            f"Removed primary account {puuid}, promoted next account for {discord_id}"
+                        )
+                    else:
+                        logger.info(f"Removed non-primary account {puuid} for {discord_id}")
+
+                return True
+
+        except Exception as e:
+            logger.error(f"Error removing account for {discord_id}: {e}")
+            return False
+
+    # ========================================================================
+    # User Preferences Methods
+    # ========================================================================
+
+    async def save_user_preferences(self, discord_id: str, preferences: dict[str, Any]) -> bool:
+        """Save user preferences to metadata field in user_profiles table.
+
+        Args:
+            discord_id: Discord user ID
+            preferences: Dictionary of preferences to save (will be merged with existing)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return False
+
+        try:
+            async with self._pool.acquire() as conn:
+                # Update metadata field by merging new preferences with existing
+                await conn.execute(
+                    """
+                    UPDATE core.user_profiles
+                    SET metadata = metadata || $2::jsonb,
+                        updated_at = $3
+                    WHERE discord_id = $1
+                    """,
+                    int(discord_id),
+                    json.dumps(preferences),
+                    datetime.now(UTC),
+                )
+
+                logger.info(f"Saved preferences for Discord ID {discord_id}: {preferences}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error saving preferences for {discord_id}: {e}")
+            return False
+
+    async def get_user_preferences(self, discord_id: str) -> dict[str, Any] | None:
+        """Get user preferences from metadata field in user_profiles table.
+
+        Args:
+            discord_id: Discord user ID
+
+        Returns:
+            Dictionary of preferences, or empty dict if not found
+        """
+        if not self._pool:
+            logger.error("Database pool not initialized")
+            return {}
+
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT metadata
+                    FROM core.user_profiles
+                    WHERE discord_id = $1
+                    """,
+                    int(discord_id),
+                )
+
+                if row and row["metadata"]:
+                    # metadata is already a dict when fetched from JSONB
+                    metadata = row["metadata"]
+                    if isinstance(metadata, dict):
+                        return metadata
+                return {}
+
+        except Exception as e:
+            logger.error(f"Error fetching preferences for {discord_id}: {e}")
+            return {}

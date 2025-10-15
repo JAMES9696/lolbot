@@ -47,6 +47,22 @@ class RiotAPIPort(ABC):
         pass
 
     @abstractmethod
+    async def get_account_by_riot_id(
+        self, game_name: str, tag_line: str, region: str = "americas"
+    ) -> dict[str, Any] | None:
+        """Get account data by RiotID (Name#Tag format).
+
+        Args:
+            game_name: Riot Game Name (before #)
+            tag_line: Riot Tag Line (after #)
+            region: Continental region for Account-V1 API (americas/asia/europe/sea)
+
+        Returns:
+            Account data with puuid, gameName, tagLine if found, None otherwise
+        """
+        pass
+
+    @abstractmethod
     async def get_match_timeline(self, match_id: str, region: str) -> dict[str, Any] | None:
         """Get detailed match timeline data from Match-V5 API."""
         pass
@@ -78,6 +94,104 @@ class DatabasePort(ABC):
     @abstractmethod
     async def list_user_bindings(self) -> list[dict[str, Any]]:
         """List all user bindings for downstream workflows."""
+        pass
+
+    # ===== Multi-Account Support Methods (方案C) =====
+
+    @abstractmethod
+    async def get_primary_account(self, discord_id: str) -> dict[str, Any] | None:
+        """Get primary (default) account for a Discord user.
+
+        Args:
+            discord_id: Discord user ID
+
+        Returns:
+            Primary account data with keys: riot_puuid, summoner_name, region, nickname, created_at
+            None if no primary account exists
+        """
+        pass
+
+    @abstractmethod
+    async def get_account_by_index(self, discord_id: str, index: int) -> dict[str, Any] | None:
+        """Get user's Nth account by creation order (0-based index).
+
+        Args:
+            discord_id: Discord user ID
+            index: 0-based account index (0=oldest, 1=second, etc.)
+
+        Returns:
+            Account data if exists, None otherwise
+        """
+        pass
+
+    @abstractmethod
+    async def list_user_accounts(self, discord_id: str) -> list[dict[str, Any]]:
+        """List all accounts for a Discord user, ordered by creation time.
+
+        Args:
+            discord_id: Discord user ID
+
+        Returns:
+            List of account dicts, each with: riot_puuid, summoner_name, region, is_primary, nickname
+        """
+        pass
+
+    @abstractmethod
+    async def save_account(
+        self,
+        discord_id: str,
+        puuid: str,
+        summoner_name: str,
+        region: str,
+        is_primary: bool = False,
+        nickname: str | None = None,
+    ) -> bool:
+        """Save/update a user account binding.
+
+        This method handles primary account mutual exclusion automatically:
+        - If is_primary=True, all other accounts for this discord_id become non-primary
+        - Enforced via database trigger
+
+        Args:
+            discord_id: Discord user ID
+            puuid: Riot PUUID (78 chars)
+            summoner_name: Format "GameName#TAG"
+            region: Lowercase region code (e.g., 'na1', 'kr')
+            is_primary: Whether to set as default account
+            nickname: Optional user-defined alias
+
+        Returns:
+            True if successful, False if PUUID already bound to another Discord user
+        """
+        pass
+
+    @abstractmethod
+    async def set_primary_account(self, discord_id: str, puuid: str) -> bool:
+        """Switch primary account for a Discord user.
+
+        Args:
+            discord_id: Discord user ID
+            puuid: PUUID of the account to promote to primary
+
+        Returns:
+            True if successful, False if account not found
+        """
+        pass
+
+    @abstractmethod
+    async def remove_account(self, discord_id: str, puuid: str) -> bool:
+        """Remove an account binding.
+
+        If removing the primary account, automatically promotes the next oldest account
+        to primary (if any other accounts exist).
+
+        Args:
+            discord_id: Discord user ID
+            puuid: PUUID of the account to remove
+
+        Returns:
+            True if successful, False if account not found
+        """
         pass
 
     @abstractmethod

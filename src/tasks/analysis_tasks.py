@@ -2779,7 +2779,7 @@ async def _generate_tts_summary(
                 # 预览与观测（不包含敏感数据）
                 processed_excerpt = processed[:400]
                 try:
-                    ledger_keys = sorted(list((ledger or {}).keys()))  # type: ignore[arg-type]
+                    ledger_keys = sorted(list((ledger or {}).keys()))
                 except Exception:
                     ledger_keys = []
                 logger.info(

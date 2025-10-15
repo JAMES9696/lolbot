@@ -124,6 +124,7 @@ class DiscordAdapter:
         db_adapter: Any,
         task_service: Any | None = None,
         match_history_service: Any | None = None,
+        riot_api: Any | None = None,
     ) -> None:
         """Initialize the Discord adapter.
 
@@ -132,12 +133,22 @@ class DiscordAdapter:
             db_adapter: Database adapter instance
             task_service: IAsyncTaskService implementation (Celery)
             match_history_service: IMatchHistoryService implementation
+            riot_api: RiotAPIPort implementation (for IdentityResolver)
         """
         self.rso = rso_adapter
         self.db = db_adapter
         self.task_service = task_service
         self.match_history_service = match_history_service
         self.settings = get_settings()
+
+        # Initialize IdentityResolver for 方案C multi-account support
+        if riot_api:
+            from src.core.services.identity_resolver import IdentityResolver
+
+            self.identity_resolver = IdentityResolver(db=db_adapter, riot_api=riot_api)
+        else:
+            self.identity_resolver = None
+
         app_id = (
             int(self.settings.discord_application_id)
             if self.settings.discord_application_id
@@ -160,37 +171,14 @@ class DiscordAdapter:
 
         @self.bot.tree.command(
             name=CommandName.BIND.value,
-            description="Link your Discord account with your League of Legends account",
+            description="绑定 Riot 账号（首次使用推荐）",
         )
-        @app_commands.describe(
-            region="Your League of Legends server region (default: NA)",
-            force_rebind="Force new binding even if already linked",
-        )
-        @app_commands.choices(
-            region=[
-                app_commands.Choice(name="North America", value="na1"),
-                app_commands.Choice(name="Europe West", value="euw1"),
-                app_commands.Choice(name="Europe Nordic & East", value="eun1"),
-                app_commands.Choice(name="Korea", value="kr"),
-                app_commands.Choice(name="Brazil", value="br1"),
-                app_commands.Choice(name="Latin America North", value="la1"),
-                app_commands.Choice(name="Latin America South", value="la2"),
-                app_commands.Choice(name="Oceania", value="oc1"),
-                app_commands.Choice(name="Russia", value="ru"),
-                app_commands.Choice(name="Turkey", value="tr1"),
-                app_commands.Choice(name="Japan", value="jp1"),
-                app_commands.Choice(name="Philippines", value="ph2"),
-                app_commands.Choice(name="Singapore", value="sg2"),
-                app_commands.Choice(name="Thailand", value="th2"),
-                app_commands.Choice(name="Taiwan", value="tw2"),
-                app_commands.Choice(name="Vietnam", value="vn2"),
-            ]
-        )
+        @app_commands.describe(force_rebind="强制重新绑定（即使已有账号）")
         async def bind_command(
-            interaction: discord.Interaction, region: str = "na1", force_rebind: bool = False
+            interaction: discord.Interaction, force_rebind: bool = False
         ) -> None:
-            """Handle /bind command."""
-            await self._handle_bind_command(interaction, region, force_rebind)
+            """Handle /bind command - Enhanced Modal UX."""
+            await self._handle_bind_command(interaction, force_rebind=force_rebind)
 
         @self.bot.tree.command(
             name=CommandName.UNBIND.value,
@@ -207,6 +195,14 @@ class DiscordAdapter:
             """Handle /profile command."""
             await self._handle_profile_command(interaction)
 
+        @self.bot.tree.command(
+            name="accounts",
+            description="账号管理 - 查看/切换/添加/删除绑定的LOL账号",
+        )
+        async def accounts_command(interaction: discord.Interaction) -> None:
+            """Handle /accounts command - multi-account management."""
+            await self._handle_accounts_command(interaction)
+
         # Conditionally register /analyze when dependencies are available
         if (
             self.settings.feature_ai_analysis_enabled
@@ -214,19 +210,89 @@ class DiscordAdapter:
             and self.match_history_service is not None
         ):
 
+            async def target_autocomplete(
+                interaction: discord.Interaction,
+                current: str,
+            ) -> list[app_commands.Choice[str]]:
+                """Autocomplete callback for target parameter.
+
+                Shows user's bound accounts with emojis and nicknames.
+                """
+                user_id = str(interaction.user.id)
+                choices: list[app_commands.Choice[str]] = []
+
+                try:
+                    # Fetch user's bound accounts
+                    accounts = await self.db.list_user_accounts(user_id)
+
+                    for idx, account in enumerate(accounts, start=1):
+                        # Format display name
+                        summoner_name = account.get("summoner_name", "Unknown")
+                        nickname = account.get("nickname")
+                        is_primary = account.get("is_primary", False)
+
+                        # Icon based on account type
+                        icon = "💎" if is_primary else "🔹"
+
+                        # Display format: "💎 主号 - Faker#KR" or "🔹 小号1 - Hide#KR"
+                        if nickname:
+                            display = f"{icon} {nickname} - {summoner_name}"
+                        else:
+                            label = "主号" if is_primary else f"小号{idx-1}"
+                            display = f"{icon} {label} - {summoner_name}"
+
+                        # Value is the account index (for easier selection)
+                        value = str(idx) if not is_primary else ""  # Primary = empty string
+
+                        choices.append(app_commands.Choice(name=display, value=value))
+
+                    # Add hint for RiotID input
+                    if len(choices) < 25:  # Discord limit is 25 choices
+                        choices.append(
+                            app_commands.Choice(
+                                name="🔍 输入 Name#TAG 查询其他账号", value="__hint_riotid__"
+                            )
+                        )
+
+                except Exception as e:
+                    logger.warning(f"Autocomplete failed for user {user_id}: {e}")
+                    # Fallback: show hint only
+                    choices = [
+                        app_commands.Choice(
+                            name="💡 留空 = 主账号 | 输入 Name#TAG | @队友", value=""
+                        )
+                    ]
+
+                # Filter by current input if user is typing
+                if current:
+                    filtered = [
+                        choice
+                        for choice in choices
+                        if current.lower() in choice.name.lower()
+                        or current.lower() in choice.value.lower()
+                    ]
+                    return filtered[:25]  # Discord max 25 choices
+
+                return choices[:25]
+
             @self.bot.tree.command(
                 name="analyze",
-                description="AI深度分析您最近的一场比赛（讲道理）",
+                description="AI深度分析比赛（讲道理）- 支持多账号/RiotID/@队友",
             )
             @app_commands.describe(
                 match_index="要分析的比赛序号（1=最新，2=倒数第二场，以此类推）",
-                riot_id="未绑定时可填：Riot ID，例如 FujiShanXia#NA1",
+                target="可选：留空=主账号 | 数字=第N个账号 | Name#TAG=Riot ID | @用户=队友主账号",
             )
+            @app_commands.autocomplete(target=target_autocomplete)
             async def analyze_command(
-                interaction: discord.Interaction, match_index: int = 1, riot_id: str | None = None
+                interaction: discord.Interaction, match_index: int = 1, target: str | None = None
             ) -> None:
-                """Handle /analyze command - AI match analysis (supports unbound Riot ID)."""
-                await self._handle_analyze_command(interaction, match_index, riot_id)
+                """Handle /analyze command - 方案C multi-account support."""
+                # Handle hint value (user clicked the hint option)
+                if target == "__hint_riotid__":
+                    target = None
+
+                await self._handle_analyze_command(interaction, match_index, target)
         else:
             logger.info(
                 "Skipping /analyze registration: feature flag or dependencies not satisfied"
@@ -334,84 +400,226 @@ class DiscordAdapter:
                 logger.exception("Unhandled error in on_interaction handler")
 
     async def _handle_bind_command(
-        self, interaction: discord.Interaction, region: str, force_rebind: bool
+        self, interaction: discord.Interaction, force_rebind: bool = False
     ) -> None:
-        """Handle the /bind slash command."""
+        """Handle the /bind slash command with enhanced Modal UX.
+
+        V3 Enhancement: Uses interactive Modal to collect complete user information
+        in a single session, reducing future friction.
+        """
+        from src.core.views.bind_modal import EnhancedBindModal
+
         user_id = str(interaction.user.id)
 
-        # Create response embed
-        embed = discord.Embed(
-            title="🔗 Account Binding",
-            description=(
-                "To link your League of Legends account, you'll need to authorize through Riot's secure login.\n\n"
-                "**Steps:**\n"
-                "1. Click the button below to open Riot Sign-On\n"
-                "2. Log in with your Riot account\n"
-                "3. Authorize the application\n"
-                "4. You'll be automatically linked!\n\n"
-                f"**Selected Region:** {region.upper()}"
-            ),
-            color=EmbedColor.INFO,
-        )
-        embed.set_thumbnail(
-            url="https://raw.githubusercontent.com/CommunityDragon/Docs/master/assets/riot-logo.png"
-        )
-        embed.set_footer(text="This process is secure and uses official Riot OAuth")
+        # Check for existing primary account
+        existing_primary = await self.db.get_primary_account(user_id)
 
-        # Generate real authorization URL
-        # Generate OAuth URL; surface config issues to user gracefully
-        try:
-            auth_url, state = await self.rso.generate_auth_url(user_id, region)
-        except Exception as e:
-            logger.error(f"RSO config error: {e}", exc_info=True)
-            await interaction.response.send_message(
-                embed=self._create_error_embed(
-                    "RSO 未正确配置，请联系管理员设置 OAuth Client 与回调地址。"
+        if existing_primary and not force_rebind:
+            # User already has a primary account bound - respond immediately
+            embed = discord.Embed(
+                title="⚠️ 账号已绑定",
+                description=(
+                    f"您已绑定主账号：**{existing_primary['summoner_name']}**\n"
+                    f"服务器：{existing_primary['region'].upper()}\n\n"
+                    f"如需重新绑定，请使用 `/bind force_rebind:True`\n"
+                    f"如需添加小号，请使用 `/账号管理`（开发中）"
                 ),
-                ephemeral=True,
+                color=EmbedColor.WARNING,
             )
+            # Respond immediately (not defer - direct response)
+            try:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            except discord.errors.NotFound:
+                # Interaction expired, try followup
+                await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-        # Create button for authorization
-        view = discord.ui.View(timeout=300)  # 5 minute timeout
+        # Define async callback for after modal submission and validation
+        async def on_submit_with_bind(
+            modal_interaction: discord.Interaction, bind_data: dict[str, Any]
+        ) -> None:
+            """Process bind data after modal validation."""
 
-        auth_button = discord.ui.Button(
-            label="Authorize with Riot",
-            style=discord.ButtonStyle.link,
-            url=auth_url,
-            emoji="🎮",
-        )
-        view.add_item(auth_button)
+            try:
+                # [STEP 1: VERIFY WITH RIOT API]
+                from src.adapters.riot_api import RiotAPIAdapter
 
-        # Send response
-        await interaction.response.send_message(
-            embed=embed,
-            view=view,
-            ephemeral=True,  # Only visible to the user
-        )
+                riot_api = RiotAPIAdapter()
 
-        # Log the binding attempt
-        logger.info(f"User {user_id} initiated binding for region {region}")
+                # Determine continental region for Account-V1 API
+                region_to_continent = {
+                    "na1": "americas",
+                    "br1": "americas",
+                    "la1": "americas",
+                    "la2": "americas",
+                    "euw1": "europe",
+                    "eun1": "europe",
+                    "tr1": "europe",
+                    "ru": "europe",
+                    "kr": "asia",
+                    "jp1": "asia",
+                    "oc1": "sea",
+                    "ph2": "sea",
+                    "sg2": "sea",
+                    "th2": "sea",
+                    "tw2": "sea",
+                    "vn2": "sea",
+                }
+                continent = region_to_continent.get(bind_data["region"], "americas")
+
+                account_data = await riot_api.get_account_by_riot_id(
+                    game_name=bind_data["game_name"],
+                    tag_line=bind_data["tag_line"],
+                    region=continent,
+                )
+
+                if not account_data:
+                    error_embed = discord.Embed(
+                        title="❌ 账号未找到",
+                        description=(
+                            f"未找到 Riot 账号：**{bind_data['game_name']}#{bind_data['tag_line']}**\n\n"
+                            f"请检查：\n"
+                            f"• 游戏名和标签拼写是否正确\n"
+                            f"• 是否选择了正确的服务器区域"
+                        ),
+                        color=EmbedColor.ERROR,
+                    )
+                    await modal_interaction.followup.send(embed=error_embed, ephemeral=True)
+                    return
+
+                puuid = account_data.get("puuid")
+                if not puuid:
+                    raise ValueError("Account data missing PUUID")
+
+                # [STEP 2: SAVE TO DATABASE]
+                summoner_name = f"{bind_data['game_name']}#{bind_data['tag_line']}"
+
+                success = await self.db.save_account(
+                    discord_id=user_id,
+                    puuid=puuid,
+                    summoner_name=summoner_name,
+                    region=bind_data["region"],
+                    is_primary=True,  # First account is always primary
+                    nickname=bind_data["nickname"],
+                )
+
+                if not success:
+                    error_embed = discord.Embed(
+                        title="❌ 绑定失败",
+                        description=(
+                            "该 Riot 账号已被其他 Discord 用户绑定。\n\n"
+                            "一个 Riot 账号只能绑定到一个 Discord 账号。"
+                        ),
+                        color=EmbedColor.ERROR,
+                    )
+                    await modal_interaction.followup.send(embed=error_embed, ephemeral=True)
+                    return
+
+                # [STEP 3: SAVE USER PREFERENCES (if provided)]
+                if bind_data["main_role"]:
+                    try:
+                        from src.contracts.user_preferences import PreferenceUpdateRequest
+
+                        pref_update = PreferenceUpdateRequest(
+                            main_role=bind_data["main_role"],
+                        )
+                        await self.db.save_user_preferences(
+                            user_id, pref_update.model_dump(exclude_none=True)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to save user preferences during bind: {e}")
+                        # Non-critical, continue with success message
+
+                # [STEP 4: SUCCESS MESSAGE]
+                success_embed = discord.Embed(
+                    title="✅ 绑定成功",
+                    description=(
+                        f"**主账号已绑定：**\n"
+                        f"🎮 Riot ID: `{summoner_name}`\n"
+                        f"🌍 服务器: `{bind_data['region'].upper()}`\n"
+                    ),
+                    color=EmbedColor.SUCCESS,
+                )
+
+                if bind_data["nickname"]:
+                    success_embed.add_field(
+                        name="📝 昵称",
+                        value=bind_data["nickname"],
+                        inline=True,
+                    )
+
+                if bind_data["main_role"]:
+                    # Format multiple roles nicely (comma-separated -> slash-separated uppercase)
+                    roles_display = " / ".join(r.upper() for r in bind_data["main_role"].split(","))
+                    success_embed.add_field(
+                        name="🎯 常用位置",
+                        value=roles_display,
+                        inline=True,
+                    )
+
+                success_embed.add_field(
+                    name="🚀 下一步",
+                    value=(
+                        "• 使用 `/analyze` 分析比赛\n"
+                        "• 使用 `/settings` 配置个性化偏好\n"
+                        "• 使用 `/账号管理` 添加小号（开发中）"
+                    ),
+                    inline=False,
+                )
+
+                await modal_interaction.followup.send(embed=success_embed, ephemeral=True)
+
+                logger.info(
+                    f"User {user_id} bound account: {summoner_name} "
+                    f"(region={bind_data['region']}, nickname={bind_data['nickname']}, "
+                    f"main_role={bind_data['main_role']})"
+                )
+
+            except Exception as e:
+                logger.error(f"Error processing bind: {e}", exc_info=True)
+                error_embed = discord.Embed(
+                    title="❌ 绑定失败",
+                    description=f"发生错误：{type(e).__name__}\n请稍后重试或联系管理员。",
+                    color=EmbedColor.ERROR,
+                )
+                await modal_interaction.followup.send(embed=error_embed, ephemeral=True)
+
+        # Create modal with callback
+        bind_modal = EnhancedBindModal(user_id=user_id, on_success_callback=on_submit_with_bind)
+
+        # Show modal to user
+        await interaction.response.send_modal(bind_modal)
+
+        logger.info(f"Enhanced bind modal sent to user {user_id}")
 
     async def _handle_unbind_command(self, interaction: discord.Interaction) -> None:
         """Handle the /unbind slash command."""
         user_id = str(interaction.user.id)
 
-        # Check if user has an existing binding
-        binding = await self.db.get_user_binding(user_id)
+        # Check if user has a primary account (new multi-account architecture)
+        account = await self.db.get_primary_account(user_id)
 
-        if binding:
-            # Remove the binding
-            await self.db.delete_user_binding(user_id)
+        if account:
+            # Remove the primary account
+            # TODO: For now, delete only the primary account. In future, may want to keep other accounts
+            success = await self.db.remove_account(user_id, account["riot_puuid"])
 
-            embed = discord.Embed(
-                title="🔓 Account Unbinding",
-                description=(
-                    "Your account binding has been removed.\n"
-                    "You can re-link your account at any time using `/bind`."
-                ),
-                color=EmbedColor.SUCCESS,
-            )
+            if success:
+                embed = discord.Embed(
+                    title="🔓 Account Unbound",
+                    description=(
+                        f"已解绑账号：**{account['summoner_name']}**\n\n"
+                        "You can re-link your account at any time using `/bind`."
+                    ),
+                    color=EmbedColor.SUCCESS,
+                )
+                logger.info(f"User {user_id} unbound their account: {account['summoner_name']}")
+            else:
+                embed = discord.Embed(
+                    title="❌ Unbind Failed",
+                    description="Failed to remove account binding. Please try again or contact administrator.",
+                    color=EmbedColor.ERROR,
+                )
         else:
             embed = discord.Embed(
                 title="⚠️ No Binding Found",
@@ -423,16 +631,18 @@ class DiscordAdapter:
             )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.info(f"User {user_id} unbound their account")
 
     async def _handle_profile_command(self, interaction: discord.Interaction) -> None:
         """Handle the /profile slash command."""
         user_id = str(interaction.user.id)
 
-        # Get user binding from database
-        binding = await self.db.get_user_binding(user_id)
+        # Defer response to prevent timeout
+        await interaction.response.defer(ephemeral=True)
 
-        if binding:
+        # Get user's primary account from database
+        account = await self.db.get_primary_account(user_id)
+
+        if account:
             # Show real profile data
             embed = discord.Embed(
                 title="👤 Your Profile",
@@ -440,10 +650,12 @@ class DiscordAdapter:
                 color=EmbedColor.SUCCESS,
             )
             embed.add_field(name="Discord ID", value=user_id, inline=True)
-            embed.add_field(name="Summoner Name", value=binding["summoner_name"], inline=True)
-            embed.add_field(name="Region", value=binding["region"].upper(), inline=True)
-            embed.add_field(name="PUUID", value=binding["puuid"], inline=False)
-            embed.set_footer(text="Use /unbind to remove this link")
+            embed.add_field(name="Summoner Name", value=account["summoner_name"], inline=True)
+            embed.add_field(name="Region", value=account["region"].upper(), inline=True)
+            embed.add_field(name="PUUID", value=account["riot_puuid"][:20] + "...", inline=False)
+            if account.get("nickname"):
+                embed.add_field(name="Nickname", value=account["nickname"], inline=True)
+            embed.set_footer(text="Use /accounts to manage multiple accounts")
         else:
             # Show "Not Linked" status
             embed = discord.Embed(
@@ -455,63 +667,162 @@ class DiscordAdapter:
             embed.add_field(name="Status", value="Not Linked", inline=True)
             embed.set_footer(text="Use /bind to link your League of Legends account")
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
-    async def _handle_analyze_command(
-        self, interaction: discord.Interaction, match_index: int, riot_id: str | None = None
-    ) -> None:
-        """Handle the /analyze slash command - AI match analysis (讲道理).
+    async def _handle_accounts_command(self, interaction: discord.Interaction) -> None:
+        """Handle the /accounts command - multi-account management UI.
 
-        This is the core P3 implementation following the delayed response pattern.
-        Must defer() within 3 seconds to prevent token expiration.
+        V3 Enhancement: Interactive account management with buttons and select menus.
+        Provides visual interface for:
+        - Viewing all bound accounts
+        - Switching primary account
+        - Adding new accounts
+        - Removing accounts
         """
-        # [STEP 1: DELAYED RESPONSE - IRON LAW]
-        # Must send deferred response within 3 seconds or interaction token expires
-        await interaction.response.defer(ephemeral=False)  # Public loading state
-
-        # Bind correlation id early so all bot-side logs are traceable
-        _cid = f"discord:{interaction.id}:{int(time.time() * 1000) % 1000000}"
-        try:
-            set_correlation_id(_cid)
-        except Exception:
-            _cid = _cid  # no-op; keep local for payload
+        from src.core.views.account_manager_view import AccountManagerView
 
         user_id = str(interaction.user.id)
 
-        # [STEP 2: GET PUUID/REGION]
-        # Priority: riot_id parameter > bound account
-        if riot_id:
-            # Use provided riot_id (overrides binding)
-            parsed = self._parse_riot_id(riot_id)
-            if not parsed:
-                await interaction.followup.send(
-                    embed=self._create_error_embed("Riot ID 格式无效，请使用 例如 `GameName#NA1`"),
-                    ephemeral=True,
-                )
-                return
-            game_name, tag_line = parsed
-            puuid = await self.match_history_service.get_puuid_by_riot_id(game_name, tag_line)
-            if not puuid:
-                await interaction.followup.send(
-                    embed=self._create_error_embed("未找到该 Riot ID，请检查大小写与区服标签"),
-                    ephemeral=True,
-                )
-                return
-            region = self._tag_to_platform(tag_line)
-        else:
-            # Fallback to bound account
-            binding = await self.db.get_user_binding(user_id)
-            if binding:
-                puuid = binding["puuid"]
-                region = binding["region"]
-            else:
-                await interaction.followup.send(
-                    embed=self._create_error_embed(
-                        "您尚未绑定 Riot 账户。可通过 `/bind` 绑定，或直接提供 `riot_id` 参数（例如 `FujiShanXia#NA1`）进行一次性分析。"
-                    ),
-                    ephemeral=True,
-                )
-                return
+        # Fetch all user accounts
+        accounts = await self.db.list_user_accounts(user_id)
+
+        if not accounts:
+            # No accounts bound yet
+            embed = discord.Embed(
+                title="🎮 账号管理",
+                description=(
+                    "你还没有绑定任何账号。\n\n"
+                    "**快速开始：**\n"
+                    "使用 `/bind` 命令绑定你的第一个账号！"
+                ),
+                color=EmbedColor.INFO,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # Create account list embed
+        embed = discord.Embed(
+            title="🎮 账号管理",
+            description=f"你已绑定 **{len(accounts)}** 个账号",
+            color=0x5865F2,
+        )
+
+        for idx, account in enumerate(accounts, start=1):
+            summoner_name = account.get("summoner_name", "Unknown")
+            nickname = account.get("nickname")
+            is_primary = account.get("is_primary", False)
+            region = account.get("region", "??").upper()
+
+            icon = "💎" if is_primary else "🔹"
+            label = nickname or (f"账号 #{idx}")
+            status = "主账号" if is_primary else "小号"
+
+            embed.add_field(
+                name=f"{icon} {label}",
+                value=f"`{summoner_name}`\n{region} · {status}",
+                inline=True,
+            )
+
+        embed.set_footer(text="使用下拉菜单选择账号进行管理")
+
+        # Create interactive view
+        account_view = AccountManagerView(
+            accounts=accounts,
+            user_id=user_id,
+            db_adapter=self.db,
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=account_view,
+            ephemeral=True,
+        )
+
+        logger.info(f"Account management UI shown to user {user_id} ({len(accounts)} accounts)")
+
+    async def _handle_analyze_command(
+        self, interaction: discord.Interaction, match_index: int, target: str | None = None
+    ) -> None:
+        """Handle the /analyze slash command - AI match analysis (讲道理).
+
+        This is the 方案C implementation using IdentityResolver for flexible identity resolution.
+        Supports:
+        - No param → invoker's primary account
+        - Digit → invoker's Nth account
+        - Name#Tag → Riot API lookup
+        - @mention → mentioned user's primary account
+        """
+        # [STEP 1: DELAYED RESPONSE - IRON LAW]
+        await interaction.response.defer(ephemeral=False)
+
+        # Bind correlation id early
+        _cid = f"discord:{interaction.id}:{int(time.time() * 1000) % 1000000}"
+        from contextlib import suppress
+
+        with suppress(Exception):
+            set_correlation_id(_cid)
+
+        invoker_discord_id = str(interaction.user.id)
+        guild_id = str(interaction.guild_id) if interaction.guild_id else None
+
+        # [STEP 2: IDENTITY RESOLUTION - 方案C]
+        if not self.identity_resolver:
+            # Fallback: IdentityResolver not initialized (missing riot_api in __init__)
+            error_embed = self._create_error_embed(
+                "身份解析服务未初始化，请联系管理员。\n"
+                "技术提示：IdentityResolver requires RiotAPIPort injection."
+            )
+            await interaction.followup.send(embed=error_embed, ephemeral=True)
+            return
+
+        try:
+            from src.core.services.identity_resolver import (
+                IdentityResolutionError,
+                NoBindingError,
+                AccountNotFoundError,
+                RiotAPIError,
+                InvalidInputError,
+            )
+
+            identity = await self.identity_resolver.resolve(
+                invoker_discord_id=invoker_discord_id,
+                target=target,
+                guild_id=guild_id,
+            )
+
+            puuid = identity.puuid
+            region = identity.region
+
+            logger.info(
+                f"Identity resolved: invoker={invoker_discord_id}, target={target}, "
+                f"puuid={puuid[:8]}..., region={region}, source={identity.source}, "
+                f"is_self={identity.is_self}, account_index={identity.account_index}, "
+                f"summoner={identity.summoner_name}"
+            )
+
+        except NoBindingError as e:
+            error_embed = self._create_error_embed(str(e))
+            await interaction.followup.send(embed=error_embed, ephemeral=True)
+            return
+        except AccountNotFoundError as e:
+            error_embed = self._create_error_embed(str(e))
+            await interaction.followup.send(embed=error_embed, ephemeral=True)
+            return
+        except RiotAPIError as e:
+            error_embed = self._create_error_embed(str(e))
+            await interaction.followup.send(embed=error_embed, ephemeral=True)
+            return
+        except InvalidInputError as e:
+            error_embed = self._create_error_embed(str(e))
+            await interaction.followup.send(embed=error_embed, ephemeral=True)
+            return
+        except IdentityResolutionError as e:
+            logger.error(f"Unexpected identity resolution error: {e}", exc_info=True)
+            error_embed = self._create_error_embed(
+                f"身份解析失败：{type(e).__name__}\n请稍后重试或联系管理员。"
+            )
+            await interaction.followup.send(embed=error_embed, epheminal=True)
+            return
 
         try:
             # [STEP 3: FETCH MATCH HISTORY]
@@ -524,7 +835,7 @@ class DiscordAdapter:
             if len(match_id_list) < match_index:
                 error_embed = discord.Embed(
                     title="❌ 比赛不存在",
-                    description=f"您的比赛历史中没有第 {match_index} 场比赛。\n当前共有 {len(match_id_list)} 场历史记录。",
+                    description=f"该账号的比赛历史中没有第 {match_index} 场比赛。\n当前共有 {len(match_id_list)} 场历史记录。",
                     color=EmbedColor.ERROR,
                 )
                 await interaction.followup.send(embed=error_embed, ephemeral=True)
@@ -611,7 +922,6 @@ class DiscordAdapter:
                                         data = await ddragon.get_champion_by_id(cid)
                                         return (data or {}).get("image_url", "")
 
-                                # Discord's thread loop context: we are inside async, so await is fine
                                 icon = await _get_icon(champion_id)
                                 champion_icon_url = icon or ""
                         except Exception:
@@ -683,7 +993,7 @@ class DiscordAdapter:
                         analysis_dict = {
                             "match_id": target_match_id,
                             "match_result": match_result,
-                            "summoner_name": record.get("summoner_name") or "",  # ← 修复None处理
+                            "summoner_name": record.get("summoner_name") or "",
                             "champion_name": champion_name,
                             "champion_id": champion_id,
                             "ai_narrative_text": narrative,
@@ -693,8 +1003,7 @@ class DiscordAdapter:
                             "processing_duration_ms": float(
                                 record.get("processing_duration_ms") or 0.0
                             ),
-                            "algorithm_version": record.get("algorithm_version")
-                            or "v1",  # ← 修复None处理
+                            "algorithm_version": record.get("algorithm_version") or "v1",
                             "tts_audio_url": (meta or {}).get("tts_audio_url"),
                         }
 
@@ -756,9 +1065,9 @@ class DiscordAdapter:
                 application_id=str(self.bot.application_id),
                 interaction_token=interaction.token,
                 channel_id=str(interaction.channel_id),
-                guild_id=str(interaction.guild_id) if interaction.guild_id else None,
-                discord_user_id=user_id,
-                puuid=puuid,
+                guild_id=guild_id,
+                discord_user_id=invoker_discord_id,  # Always the invoker for TTS
+                puuid=puuid,  # Target player's PUUID (may differ from invoker)
                 match_id=target_match_id,
                 region=region,
                 match_index=match_index,
@@ -791,7 +1100,7 @@ class DiscordAdapter:
             loading_embed = discord.Embed(
                 title="🔄 AI 分析中...",
                 description=(
-                    f"正在对您的第 {match_index} 场比赛进行深度分析。\n\n_预计耗时：30-60秒_"
+                    f"正在对{identity.display_name()}的第 {match_index} 场比赛进行深度分析。\n\n_预计耗时：30-60秒_"
                 ),
                 color=EmbedColor.INFO,
             )
@@ -800,7 +1109,8 @@ class DiscordAdapter:
             await interaction.followup.send(embed=loading_embed, ephemeral=False)
 
             logger.info(
-                f"Analysis task pushed: user={user_id}, match={target_match_id}, index={match_index}, task_id={task_id}"
+                f"Analysis task pushed: invoker={invoker_discord_id}, target={target}, "
+                f"puuid={puuid[:8]}..., match={target_match_id}, index={match_index}, task_id={task_id}"
             )
 
         except Exception as e:
@@ -1071,103 +1381,28 @@ class DiscordAdapter:
         return mapping.get(tag.upper(), "na1")
 
     async def _handle_settings_command(self, interaction: discord.Interaction) -> None:
-        """Handle the /settings slash command - V2.2 user preference configuration.
+        """Handle the /settings slash command - V2.2 Enhanced UX.
 
-        This command shows the user's current preferences and provides
-        a Discord Modal for interactive configuration.
+        V2.3 Optimization: Replaced text input modal with visual Select Menu
+        and Button-based UI for fool-proof preference configuration.
 
-        V2.2 Implementation: User empowerment through clear preference UI.
+        UX Pattern: Follows B+D (Button + Dropdown) approach like /accounts.
         """
-        from src.core.views.settings_modal import (
-            UserSettingsModal,
-        )
+        from src.core.views.enhanced_settings_view import create_enhanced_settings_view
 
         user_id = str(interaction.user.id)
 
         try:
-            # [STEP 1: FETCH CURRENT PREFERENCES]
-            # TODO(V2.2-CLI2): Integrate with UserProfileService.get_user_preferences()
-            # For now, we'll use None (default settings) until backend is ready
-            # current_preferences = None
+            # Defer response for database fetch
+            await interaction.response.defer(ephemeral=True)
 
-            # [STEP 2: CREATE SETTINGS MODAL WITH CALLBACK HANDLER]
-            # Create a custom modal instance that handles persistence
-            settings_modal = UserSettingsModal()
+            # Create enhanced settings view with current preferences
+            embed, view = await create_enhanced_settings_view(user_id=user_id, db_adapter=self.db)
 
-            # Set up the callback handler for modal submission
-            original_on_submit = settings_modal.on_submit
+            # Send interactive settings UI
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-            async def on_submit_with_persistence(modal_interaction: discord.Interaction) -> None:
-                """Extended on_submit handler that persists preferences to backend."""
-                # Call original validation logic
-                await original_on_submit(modal_interaction)
-
-                # Check if validation passed (modal should have update_request)
-                if hasattr(settings_modal, "update_request"):
-                    update_request = settings_modal.update_request
-
-                    # [STEP 3: PERSIST PREFERENCES]
-                    # TODO(V2.2-CLI2): Integrate with UserProfileService.update_user_preferences()
-                    # For now, we'll just acknowledge the update
-                    logger.info(
-                        f"User {user_id} submitted preference update: {update_request.model_dump()}"
-                    )
-
-                    # [STEP 4: SEND SUCCESS RESPONSE]
-                    success_embed = discord.Embed(
-                        title="✅ 设置已保存",
-                        description="您的个性化配置已成功更新！",
-                        color=EmbedColor.SUCCESS,
-                    )
-
-                    # Show what was updated
-                    updated_fields = []
-                    if update_request.main_role is not None:
-                        updated_fields.append(f"**主要位置:** {update_request.main_role}")
-                    if update_request.analysis_tone is not None:
-                        tone_display = {
-                            "competitive": "竞争型",
-                            "casual": "休闲型",
-                            "balanced": "平衡型",
-                        }.get(update_request.analysis_tone, update_request.analysis_tone)
-                        updated_fields.append(f"**分析语气:** {tone_display}")
-                    if update_request.advice_detail_level is not None:
-                        detail_display = {
-                            "concise": "简洁",
-                            "detailed": "详细",
-                        }.get(
-                            update_request.advice_detail_level,
-                            update_request.advice_detail_level,
-                        )
-                        updated_fields.append(f"**建议详细程度:** {detail_display}")
-                    if update_request.show_timeline_references is not None:
-                        timeline_text = (
-                            "显示" if update_request.show_timeline_references else "隐藏"
-                        )
-                        updated_fields.append(f"**时间轴引用:** {timeline_text}")
-
-                    if updated_fields:
-                        success_embed.add_field(
-                            name="已更新的设置",
-                            value="\n".join(updated_fields),
-                            inline=False,
-                        )
-
-                    success_embed.set_footer(
-                        text="这些设置将在下次分析时生效 | 使用 /settings 可随时修改"
-                    )
-
-                    await modal_interaction.followup.send(embed=success_embed, ephemeral=True)
-
-            # Monkey-patch the on_submit method to include persistence
-            settings_modal.on_submit = on_submit_with_persistence  # type: ignore[method-assign]
-
-            # [STEP 5: SHOW MODAL TO USER]
-            # Send modal as interaction response
-            # The modal will handle submission automatically via on_submit callback
-            await interaction.response.send_modal(settings_modal)
-
-            logger.info(f"Settings modal sent to user {user_id}")
+            logger.info(f"Enhanced settings view sent to user {user_id}")
 
         except Exception as e:
             logger.error(f"Error in settings command: {e}", exc_info=True)
@@ -1175,15 +1410,7 @@ class DiscordAdapter:
                 f"设置配置失败：{type(e).__name__}\n请稍后重试或联系管理员。"
             )
 
-            # Try to send error (if interaction not yet responded)
-            try:
-                if not interaction.response.is_done():
-                    await interaction.response.send_message(embed=error_embed, ephemeral=True)
-                else:
-                    await interaction.followup.send(embed=error_embed, ephemeral=True)
-            except discord.errors.HTTPException as http_err:
-                # Interaction might have expired or other HTTP error
-                logger.warning(f"Could not send error message to user {user_id}: {http_err}")
+            await interaction.followup.send(embed=error_embed, ephemeral=True)
 
     async def _handle_help_command(self, interaction: discord.Interaction) -> None:
         """Handle the /help command - V2.3 feature documentation and mode support.

@@ -181,15 +181,17 @@ async def main() -> None:
         from src.core.services import CeleryTaskService, MatchHistoryService
         from src.adapters.riot_api import RiotAPIAdapter
 
+        riot_api = RiotAPIAdapter()
         task_service = CeleryTaskService()
-        match_history_service = MatchHistoryService(riot_api=RiotAPIAdapter(), db=db_adapter)
+        match_history_service = MatchHistoryService(riot_api=riot_api, db=db_adapter)
 
-        # Discord adapter with services injected (enables /讲道理 registration)
+        # Discord adapter with services injected (enables /讲道理 registration + 方案C)
         discord_adapter = DiscordAdapter(
             rso_adapter=rso_adapter,
             db_adapter=db_adapter,
             task_service=task_service,
             match_history_service=match_history_service,
+            riot_api=riot_api,  # Required for IdentityResolver (方案C)
         )
 
         # RSO callback server
